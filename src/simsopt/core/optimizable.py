@@ -10,20 +10,30 @@ setting up optimizable objects and objective functions.
 import numpy as np
 import types
 import logging
+import abc
 from mpi4py import MPI
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
-class Optimizable():
+class Optimizable(metaclass=abc.ABCMeta):
     """
     This base class provides some useful features for optimizable functions.
     """
+    @abc.abstractmethod
     def get_dofs(self):
-        raise NotImplementedError
-    
+        """
+
+        :return:
+        """
+
+    @abc.abstractmethod
     def set_dofs(self, x):
-        raise NotImplementedError
-    
+        """
+
+        :param x:
+        :return:
+        """
+
     def index(self, dof_str):
         """
         Given a string dof_str, returns the index in the dof array whose

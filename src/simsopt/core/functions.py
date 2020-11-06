@@ -38,6 +38,7 @@ class Identity(Optimizable):
         Same as the function J(), but a property instead of a function.
         """
         return self.x
+
     @property
     def df(self):
         """
