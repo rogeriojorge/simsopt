@@ -3,13 +3,19 @@ import numpy as np
 from simsopt.core.optimizable import Optimizable
 from simsopt.core.functions import Adder
 
-class OptimizableTests(unittest.TestCase):
+class OptimizableTests(unittest.TestCase, Optimizable):
+    def get_dofs(self):
+        pass
+
+    def set_dofs(self, x):
+        pass
+
     def test_index(self):
         """
         Test Optimizable.index()
         """
         o = Optimizable()
-        o.names = ['foo', 'bar']
+        o.names = ['foo', 'bar']  # OK for this
         self.assertEqual(o.index('foo'), 0)
         self.assertEqual(o.index('bar'), 1)
         # If the string does not match any name, raise an exception
@@ -21,7 +27,7 @@ class OptimizableTests(unittest.TestCase):
         Test Optimizable.set() and Optimizable.get()
         """
         o = Adder(4)
-        o.names = ['foo', 'bar', 'gee', 'whiz']
+        o.names = ['foo', 'bar', 'gee', 'whiz'] # Not OK
         o.set('gee', 42)
         self.assertEqual(o.get('gee'), 42)
         o.set('foo', -12)
