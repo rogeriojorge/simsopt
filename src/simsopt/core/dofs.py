@@ -10,6 +10,7 @@ and general optimization problems.
 import numpy as np
 import types
 import logging
+import collections
 from mpi4py import MPI
 from .util import unique
 from .optimizable import function_from_user
@@ -34,14 +35,58 @@ def get_owners(obj, owners_so_far=[]):
             owners += get_owners(subobj, owners_so_far=owners)
     return owners
     
+class DOF(collections.abc.Hashable):
+    """
+    A generalized class to represent an individual degrees of freedom
+    associated with optimizable functions.
+    """
+    def __init__(self, name=None, fixed=False, lower_bound=np.NINF,
+                 upper_bound=np.Inf):
+        self._name = name
+        self._fixed = fixed
+        self._lb = lower_bound
+        self._up = upper_bound
 
-class Dofs():
+    @property
+    def name(self):
+        """
+        Name of DOF
+        """
+        return self._name
+
+    @name.setter
+    def name(self, name):
+        self._name = name
+
+    def is_fixed(self):
+        """
+        Is the DOF fixed
+        """
+        return self._fixed
+
+    def fix(self):
+        """
+        Restrict the DOF
+        """
+        self._fixed = True
+
+    def unfix(self):
+        """
+        Make the DOF variable
+        """
+        self._fixed = False
+
+class DOFs():
     """
     This class holds data related to the vector of degrees of freedom
     that have been combined from multiple optimizable objects, keeping
     only the non-fixed dofs.
     """
-    def __init__(self, funcs):
+    def __init__(self, names, owners):
+        pass
+
+    @classmethod
+    def from_functions(cls, funcs):
         """
         Given a list of optimizable functions, 
 

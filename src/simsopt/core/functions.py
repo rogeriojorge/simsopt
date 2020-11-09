@@ -86,9 +86,13 @@ class Adder(Optimizable):
         return np.ones(self.n)
     
     def get_dofs(self):
+        """
+        """
         return self.x
 
     def set_dofs(self, xin):
+        """
+        """
         self.x = np.array(xin)
 
 class Rosenbrock(Optimizable):

@@ -9,37 +9,45 @@ setting up optimizable objects and objective functions.
 
 import numpy as np
 import types
+import abc
 import logging
 from mpi4py import MPI
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
-class Optimizable():
+class Optimizable(metalclass=abc.ABCMeta):
     """
-    This base class provides some useful features for optimizable functions.
+    Abstract base class provides useful features for optimizable functions.
+
+    The class defines methods that are used by simsopt to know 
+    degrees of freedoms (DOFs) associated with the optimizable
+    function. All derived functions have to define get_dofs and
+    set_dofs methods.
     """
+    @abc.abtractmethod
     def get_dofs(self):
-        raise NotImplementedError
-    
+        """
+        """
+    @abc.abstractmethod 
     def set_dofs(self, x):
-        raise NotImplementedError
+        """
+        """
     
     def index(self, dof_str):
         """
-        Given a string dof_str, returns the index in the dof array whose
-        name matches dof_str. If dof_str does not match any of the
-        names, ValueError will be raised.
+        Returns the index in the dof array whose name matches dof_str. 
+        If not found, ValueError will be raised.
         """
-        return self.names.index(dof_str)
+        return self.dof_names.index(dof_str)
 
-    def get(self, dof_str):
+    def get_dof_by_name(self, dof_str):
         """
         Return a degree of freedom specified by its string name.
         """
         x = self.get_dofs()
         return x[self.index(dof_str)]
 
-    def set(self, dof_str, newval):
+    def set_dof_by_name(self, dof_str, newval):
         """
         Set a degree of freedom specified by its string name.
         """
@@ -47,23 +55,35 @@ class Optimizable():
         x[self.index(dof_str)] = newval
         self.set_dofs(x)
 
-    def get_fixed(self, dof_str):
+    def is_dof_fixed(self, dof_str):
         """
-        Return the fixed attribute for a given degree of freedon, specified by dof_str.
+        Identifies if the fixed attribute for a given DOF is set
         """
-        return self.fixed[self.index(dof_str)]
+        return self.dof_fixed[self.index(dof_str)]
         
-    def set_fixed(self, dof_str, fixed_new=True):
+    def fix_dof(self, dof_str):
         """
         Set the fixed attribute for a given degree of freedom, specified by dof_str.
         """
-        self.fixed[self.index(dof_str)] = fixed_new
+        self.dof_fixed[self.index(dof_str)] = True
 
-    def all_fixed(self, fixed_new=True):
+    def unfix_dof(self, dof_str):
+        """
+        Set the fixed attribute for a given degree of freedom, specified by dof_str.
+        """
+        self.dof_fixed[self.index(dof_str)] = False
+
+    def fix_all_dofs(self):
         """
         Set the 'fixed' attribute for all degrees of freedom.
         """
-        self.fixed = np.full(len(self.get_dofs()), fixed_new)
+        self.dof_fixed = np.full(len(self.get_dofs()), True)
+        
+    def unfix_all_dofs(self):
+        """
+        Set the 'fixed' attribute for all degrees of freedom.
+        """
+        self.dof_fixed = np.full(len(self.get_dofs()), False)
         
 def function_from_user(target):
     """
@@ -126,8 +146,8 @@ def optimizable(obj):
         obj.set_dofs = types.MethodType(set_dofs, obj)
             
     n = len(obj.get_dofs())
-    if not hasattr(obj, 'fixed'):
-        obj.fixed = np.full(n, False)
+    if not hasattr(obj, 'dof_fixed'):
+        obj.dof_fixed = np.full(n, False)
     if not hasattr(obj, 'mins'):
         obj.mins = np.full(n, np.NINF)
     if not hasattr(obj, 'maxs'):
