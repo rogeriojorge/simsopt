@@ -18,6 +18,7 @@ from .mpi import CALCULATE_F
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
+
 def get_owners(obj, owners_so_far=[]):
     """
     Given an object, return a list of objects that own any
@@ -34,12 +35,14 @@ def get_owners(obj, owners_so_far=[]):
                 raise RuntimeError('Circular dependency detected among the objects')
             owners += get_owners(subobj, owners_so_far=owners)
     return owners
-    
+
+
 class DOF():
     """
     A generalized class to represent an individual degrees of freedom
     associated with optimizable functions.
     """
+
     def __init__(self, name=None, fixed=False, lower_bound=np.NINF,
                  upper_bound=np.Inf):
         """
@@ -52,7 +55,7 @@ class DOF():
         self._name = name
         self._fixed = fixed
         self._lb = lower_bound
-        self._up = upper_bound
+        self._ub = upper_bound
 
     @property
     def name(self):
@@ -119,12 +122,13 @@ class DOF():
         self._ub = upper_bound
 
 
-class DOFs():
+class DOFs:
     """
     This class holds data related to the vector of degrees of freedom
     that have been combined from multiple optimizable objects, keeping
     only the non-fixed dofs.
     """
+
     def __init__(self, names, fixed=None, lower_bounds=None, upper_bounds=None):
         """
 
@@ -146,7 +150,7 @@ class DOFs():
                              "the length of 'names'.")
         self._dofs = []
         for i, name in enumerate(names):
-            if fixed and not fixed[i]: # Fixed sequence is defined
+            if fixed and not fixed[i]:  # Fixed sequence is defined
                 if lower_bounds:
                     lb = lower_bounds[i]
                 else:
@@ -180,10 +184,10 @@ class DOFs():
 
         names: A list of strings to identify each of the dofs.
         """
-        
+
         # Convert all user-supplied function-like things to actual functions:
         funcs = [function_from_user(f) for f in funcs]
-        
+
         # First, get a list of the objects and any objects they depend on:
         all_owners = []
         for j in funcs:
@@ -209,7 +213,7 @@ class DOFs():
             else:
                 fixed = [False] * ndofs
             fixed_merged += fixed
-            
+
             # Check for bound constraints:
             if hasattr(owner, 'mins'):
                 omins = owner.mins
@@ -265,13 +269,13 @@ class DOFs():
                 for jdof in range(ndofs):
                     f_dof_owners.append(owner)
                     f_indices.append(jdof)
-                    #if not fixed[jdof]:
+                    # if not fixed[jdof]:
                     #    f_dof_owners.append(owner)
                     #    f_indices.append(jdof)
             func_dof_owners.append(f_dof_owners)
             func_indices.append(f_indices)
             func_fixed.append(f_fixed)
-            
+
         # Check whether derivative information is available:
         grad_avail = True
         grad_funcs = []
@@ -347,11 +351,11 @@ class DOFs():
             else:
                 self.nvals_per_func[j] = 1
                 val_list.append(np.array([f]))
-                
+
         logger.debug('Detected nvals_per_func={}'.format(self.nvals_per_func))
         self.nvals = np.sum(self.nvals_per_func)
         return np.concatenate(val_list)
-    
+
     def jac(self, x=None):
         """
         Return the Jacobian, i.e. the gradients of all the functions that
@@ -369,11 +373,11 @@ class DOFs():
         if x is not None:
             self.set(x)
 
-        #grads = [np.array(f()) for f in self.grad_funcs]
+        # grads = [np.array(f()) for f in self.grad_funcs]
 
         start_indices = np.full(self.nfuncs, 0)
         end_indices = np.full(self.nfuncs, 0)
-        
+
         # First, evaluate all the gradient functions, and autodetect
         # how many rows there are in the gradient for each function.
         grads = []
@@ -384,7 +388,7 @@ class DOFs():
             # or 2D numpy array. Previously I also had flatten() for
             # working with Florian's simsgeo function; this may not
             # work now without the flatten.
-            
+
             # Make sure grad is a 2D array (like the Jacobian)
             if grad.ndim == 1:
                 # In this case, I should perhaps handle the rare case
@@ -406,9 +410,9 @@ class DOFs():
             if j > 0:
                 start_indices[j] = end_indices[j - 1]
             end_indices[j] = start_indices[j] + this_nvals
-                
+
         self.nvals = np.sum(self.nvals_per_func)
-            
+
         results = np.zeros((self.nvals, self.nparams))
         # Loop over the rows of the Jacobian, i.e. over the functions
         # that were originally provided to Dofs():
@@ -416,25 +420,26 @@ class DOFs():
             start_index = start_indices[jfunc]
             end_index = end_indices[jfunc]
             grad = grads[jfunc]
-            
+
             # Match up the global dofs with the dofs for this particular gradient function:
             for jdof in range(self.nparams):
                 for jgrad in range(len(self.func_indices[jfunc])):
                     # A global dof matches a dof for this function if the owners and indices both match:
-                    if self.dof_owners[jdof] == self.func_dof_owners[jfunc][jgrad] and self.indices[jdof] == self.func_indices[jfunc][jgrad]:
+                    if self.dof_owners[jdof] == self.func_dof_owners[jfunc][jgrad] and self.indices[jdof] == \
+                            self.func_indices[jfunc][jgrad]:
                         results[start_index:end_index, jdof] = grad[:, jgrad]
                         # If we find a match, we can exit the innermost loop:
                         break
-                        
-        #print('finite-difference Jacobian:')
-        #fd_jac = self.fd_jac()
-        #print(fd_jac)
-        #print('analytic Jacobian:')
-        #print(results)
-        #print('difference:')
-        #print(fd_jac - results)
+
+        # print('finite-difference Jacobian:')
+        # fd_jac = self.fd_jac()
+        # print(fd_jac)
+        # print('analytic Jacobian:')
+        # print(results)
+        # print('difference:')
+        # print(fd_jac - results)
         return results
-            
+
     def set(self, x):
         """
         Call set_dofs() for each object, given a global state vector x.
@@ -467,7 +472,7 @@ class DOFs():
 
         if x is not None:
             self.set(x)
-        
+
         logger.info('Beginning finite difference gradient calculation for functions ' + str(self.funcs))
 
         x0 = self.x
@@ -482,12 +487,12 @@ class DOFs():
 
                 x[j] = x0[j] + eps
                 self.set(x)
-                #fplus = np.array([f() for f in self.funcs])
+                # fplus = np.array([f() for f in self.funcs])
                 fplus = self.f()
                 if jac is None:
                     # After the first function evaluation, we now know
                     # the size of the Jacobian.
-                    jac = np.zeros((self.nvals, self.nparams)) 
+                    jac = np.zeros((self.nvals, self.nparams))
 
                 x[j] = x0[j] - eps
                 self.set(x)
@@ -510,7 +515,6 @@ class DOFs():
         # to x0:
         self.set(x0)
         return jac
-
 
     def fd_jac_par(self, mpi, x=None, eps=1e-7, centered=False):
         """
@@ -539,12 +543,12 @@ class DOFs():
             mpi.worker_loop(self)
         if not mpi.proc0_groups:
             return
-        
+
         # Only group leaders execute this next section.
-        
+
         if x is not None:
             self.set(x)
-        
+
         logger.info('Beginning parallel finite difference gradient calculation for functions ' + str(self.funcs))
 
         x0 = self.x
@@ -558,7 +562,7 @@ class DOFs():
             nevals = 2 * self.nparams
             xs = np.zeros((self.nparams, nevals))
             for j in range(self.nparams):
-                xs[:, 2 * j] = x0[:] # I don't think I need np.copy(), but not 100% sure.
+                xs[:, 2 * j] = x0[:]  # I don't think I need np.copy(), but not 100% sure.
                 xs[j, 2 * j] = x0[j] + eps
                 xs[:, 2 * j + 1] = x0[:]
                 xs[j, 2 * j + 1] = x0[j] - eps
@@ -572,12 +576,12 @@ class DOFs():
                 xs[j, j + 1] = x0[j] + eps
 
         # proc0_world will be responsible for detecting nvals, since
-        #proc0_world always does at least 1 function evaluation. Other
-        #procs cannot be trusted to evaluate nvals because they may
-        #not have any function evals, in which case they never create
-        #"evals", so the MPI reduce would fail.
-        
-        #evals = np.zeros((self.nfuncs, nevals))
+        # proc0_world always does at least 1 function evaluation. Other
+        # procs cannot be trusted to evaluate nvals because they may
+        # not have any function evals, in which case they never create
+        # "evals", so the MPI reduce would fail.
+
+        # evals = np.zeros((self.nfuncs, nevals))
         evals = None
         if not mpi.proc0_world:
             # All procs other than proc0_world should initialize evals
@@ -596,14 +600,14 @@ class DOFs():
                     self.nvals = mpi.comm_leaders.bcast(self.nvals)
                     evals = np.zeros((self.nvals, nevals))
                 evals[:, j] = f
-                #evals[:, j] = np.array([f() for f in self.funcs])
+                # evals[:, j] = np.array([f() for f in self.funcs])
 
         # Combine the results from all groups:
         evals = mpi.comm_leaders.reduce(evals, op=MPI.SUM, root=0)
 
         if together_at_start:
             mpi.stop_workers()
-        
+
         # Only proc0_world will actually have the Jacobian.
         if not mpi.proc0_world:
             return None
@@ -622,4 +626,3 @@ class DOFs():
         # to x0:
         self.set(x0)
         return jac
-
