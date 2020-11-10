@@ -10,6 +10,7 @@ and general optimization problems.
 import numpy as np
 import types
 import logging
+import collections
 from mpi4py import MPI
 from .util import unique
 from .optimizable import function_from_user
@@ -34,14 +35,130 @@ def get_owners(obj, owners_so_far=[]):
             owners += get_owners(subobj, owners_so_far=owners)
     return owners
     
+class DOF():
+    """
+    A generalized class to represent an individual degrees of freedom
+    associated with optimizable functions.
+    """
+    def __init__(self, name=None, fixed=False, lower_bound=np.NINF,
+                 upper_bound=np.Inf):
+        """
 
-class Dofs():
+        :param name: Name of DOF for easy reference
+        :param fixed: Flag to denote if the ODF is constrained?
+        :param lower_bound: Minimum allowed value of DOF
+        :param upper_bound: Maximum allowed value of DOF
+        """
+        self._name = name
+        self._fixed = fixed
+        self._lb = lower_bound
+        self._up = upper_bound
+
+    @property
+    def name(self):
+        """
+        Name of DOF
+
+        :return: Name of the DOF for easy access
+        """
+        return self._name
+
+    @name.setter
+    def name(self, name):
+        """
+        Set the name of DOF
+
+        :param name: Name of the DOF
+        """
+        self._name = name
+
+    def is_fixed(self):
+        """
+        Is the DOF fixed
+
+        :return: True if DOF is fixed else False
+        """
+        return self._fixed
+
+    def fix(self):
+        """
+        Restrict the DOF to a fixed value
+        """
+        self._fixed = True
+
+    def unfix(self):
+        """
+        Make the DOF variable
+        """
+        self._fixed = False
+
+    @property
+    def min(self):
+        """
+        Minimum value of DOF allowed
+
+        :return: Lower bound of DOF if not fixed else None
+        """
+        return None if self._fixed else self._lb
+
+    @min.setter
+    def min(self, lower_bound):
+        self._lb = lower_bound
+
+    @property
+    def max(self):
+        """
+        Maximum value of DOF allowed
+
+        :return: Upper bound of DOF if not fixed else None
+        """
+        return None if self._fixed else self._ub
+
+    @max.setter
+    def max(self, upper_bound):
+        self._ub = upper_bound
+
+
+class DOFs():
     """
     This class holds data related to the vector of degrees of freedom
     that have been combined from multiple optimizable objects, keeping
     only the non-fixed dofs.
     """
-    def __init__(self, funcs):
+    def __init__(self, names, fixed=None, lower_bounds=None, upper_bounds=None):
+        """
+
+        :param names: Names of the DOFs
+        :param fixed: Array of boolean values denoting if the DOFs is fixed
+        :param lower_bounds: Lower bounds for the DOFs. Meaningful only if
+                DOF is not fixed. Default is np.NINF
+        :param upper_bounds: Upper bounds for the DOFs. Meaningful only if
+                DOF is not fixed. Default is np.inf
+        """
+        if fixed and (len(names) != len(fixed)):
+            raise IndexError("The length of `fixed' should be equal to "
+                             "the length of 'names'.")
+        if lower_bounds and (len(names) != len(lower_bounds)):
+            raise IndexError("The length of `lower_bounds' should be equal to "
+                             "the length of 'names'.")
+        if upper_bounds and (len(names) != len(upper_bounds)):
+            raise IndexError("The length of `upper_bounds' should be equal to "
+                             "the length of 'names'.")
+        self._dofs = []
+        for i, name in enumerate(names):
+            if fixed and not fixed[i]: # Fixed sequence is defined
+                if lower_bounds:
+                    lb = lower_bounds[i]
+                else:
+                    lb = None
+                if upper_bounds:
+                    ub = upper_bounds[i]
+                else:
+                    ub = None
+                self._dofs.append(DOF(names[i], lower_bound=lb, upper_bound=ub))
+
+    @classmethod
+    def from_functions(cls, funcs):
         """
         Given a list of optimizable functions, 
 
@@ -168,22 +285,25 @@ class Dofs():
             # If we get here, a gradient function exists.
             grad_funcs.append(getattr(owner, grad_func_name))
 
-        self.funcs = funcs
-        self.nfuncs = len(funcs)
-        self.nparams = len(x)
-        self.nvals = None # We won't know this until the first function eval.
-        self.nvals_per_func = np.full(self.nfuncs, 0)
-        self.dof_owners = dof_owners
-        self.indices = np.array(indices)
-        self.names = names
-        self.mins = np.array(mins)
-        self.maxs = np.array(maxs)
-        self.all_owners = all_owners
-        self.func_dof_owners = func_dof_owners
-        self.func_indices = func_indices
-        self.func_fixed = func_fixed
-        self.grad_avail = grad_avail
-        self.grad_funcs = grad_funcs
+        dofs = DOFs(names, lower_bounds=mins, upper_bounds=maxs)
+
+        # Make sure which ones are required and which ones are not
+        dofs.funcs = funcs
+        dofs.nfuncs = len(funcs)
+        dofs.nparams = len(x)
+        dofs.nvals = None  # We won't know this until the first function eval.
+        dofs.nvals_per_func = np.full(dofs.nfuncs, 0)
+        dofs.dof_owners = dof_owners
+        dofs.indices = np.array(indices)
+        # self.names = names
+        # self.mins = np.array(mins)
+        # self.maxs = np.array(maxs)
+        dofs.all_owners = all_owners
+        dofs.func_dof_owners = func_dof_owners
+        dofs.func_indices = func_indices
+        dofs.func_fixed = func_fixed
+        dofs.grad_avail = grad_avail
+        dofs.grad_funcs = grad_funcs
 
     @property
     def x(self):
