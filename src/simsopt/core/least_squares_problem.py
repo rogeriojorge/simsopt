@@ -7,18 +7,19 @@ This module provides the LeastSquaresProblem class, as well as the
 associated class LeastSquaresTerm.
 """
 
-from mpi4py import MPI
 import numpy as np
-from scipy.optimize import least_squares
 import logging
+import warnings
+
+from scipy.optimize import least_squares
+from mpi4py import MPI
 from .dofs import Dofs
 from .util import isnumber
-from .optimizable import function_from_user
-from .mpi import MpiPartition, CALCULATE_F, CALCULATE_JAC
-#from simsopt import mpi
-#import mpi
+from .optimizable import function_from_user, Target
+
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
+
 
 class LeastSquaresTerm:
     """
@@ -28,36 +29,30 @@ class LeastSquaresTerm:
     (sigma).  The overall value of the term is:
 
     f_out = weight * (f_in - goal) ** 2.
-
-    You are also free to specify sigma = 1 / sqrt(weight) instead of
-    weight, so
-
-    f_out = ((f_in - goal) / sigma) ** 2.
     """
 
-    def __init__(self, f_in, goal, weight=None, sigma=None):
-        if (weight is None) and (sigma is None):
-            raise ValueError('You must specify either weight or sigma.')
-        if (weight is not None) and (sigma is not None):
-            raise ValueError('You cannot specify both sigma and weight.')
-        if sigma == 0:
-            raise ValueError('sigma cannot be 0')
-        if weight is not None:
-            # Weight was specified, sigma was not
-            if not isnumber(weight):
-                raise TypeError('Weight must be a float or int')
-            if weight < 0:
-                raise ValueError('Weight cannot be negative')
-            self.weight = float(weight)
-        else:
-            # Sigma was specified, weight was not
-            if not isnumber(sigma):
-                raise TypeError('sigma must be a float or int')
-            self.weight = 1.0 / float(sigma * sigma)
-
+    def __init__(self, f_in, goal, weight): #=None, sigma=None):
         self.f_in = function_from_user(f_in)
         self.goal = goal
-        #self.fixed = np.full(0, False) # What is this line for?
+        if not isnumber(weight): # Bharat's comment: Do we need this check?
+            raise TypeError('Weight must be a float or int')
+        if weight < 0:
+            raise ValueError('Weight cannot be negative')
+        self.weight = float(weight)
+        # self.fixed = np.full(0, False) # What is this line for?
+
+    @classmethod
+    def from_sigma(cls, f_in, goal, sigma):
+        """
+        Define the LeastSquaresTerm with sigma = 1 / sqrt(weight), so
+
+        f_out = ((f_in - goal) / sigma) ** 2.
+        """
+        if sigma == 0:
+            raise ValueError('sigma cannot be 0')
+        if not isnumber(sigma): # Bharat's comment: Do we need this check?
+            raise TypeError('sigma must be a float or int')
+        return cls(f_in, goal, 1.0 / float(sigma * sigma))
 
     def f_out(self):
         """
@@ -66,46 +61,56 @@ class LeastSquaresTerm:
         temp = self.f_in() - self.goal
         # Below, np.dot works with both scalars and vectors.
         return self.weight * np.dot(temp, temp)
-    
 
-    
+
 class LeastSquaresProblem:
     """
     This class represents a nonlinear-least-squares optimization
     problem. The class stores a list of LeastSquaresTerm objects.
     """
 
-    def __init__(self, terms, mpi=None):
+    def __init__(self, terms):
         """
-        The argument "terms" must be convertable to a list by the
-        list() subroutine. Each entry of the resulting list must have
-        type LeastSquaresTerm.
+        The argument "terms" must be convertable to a list by the list()
+        subroutine. Each entry of the resulting list must either have
+        type LeastSquaresTerm or else be a list or tuple of the form
+        (function, goal, weight) or (object, attribute_str, goal,
+        weight).
         """
 
-        try:
-            terms = list(terms)
-        except:
-            raise ValueError("terms must be convertable to a list by the " \
-                                 + "list(terms) command.")
-        if len(terms) == 0:
-            raise ValueError("At least 1 LeastSquaresTerm must be provided " \
-                                 "in terms")
+        #try:
+        #   terms = list(terms)
+        #except:
+        #    raise ValueError("terms must be convertable to a list by the "
+        #                     "list(terms) command.")
+
+        # For each item provided in the list, either convert to a
+        # LeastSquaresTerm or, if it is already a LeastSquaresTerm,
+        # use it directly.
+        self.terms = []
+        msg = 'Each term must be either (1) a LeastSquaresTerm or (2) a list '\
+              'or tuple of the form (function, goal, weight) or (object, '    \
+              'attribute_str, goal, weight)'
         for term in terms:
-            if not isinstance(term, LeastSquaresTerm):
-                raise ValueError("Each term in terms must be an instance of " \
-                                     "LeastSquaresTerm.")
-        self.terms = terms
-        if mpi is None:
-            self.mpi = MpiPartition(ngroups=1)
-        else:
-            self.mpi = mpi
+            if isinstance(term, LeastSquaresTerm):
+                self.terms.append(term)
+            else: # Expect the term to be an Iterable, but don't check
+                if len(term) == 4: # 4 item list is a special case
+                    lst = LeastSquaresTerm(Target(*term[:2]), *term[2:])
+                else:
+                    lst = LeastSquaresTerm(*term)
+                self.terms.append(lst)
+
+        if not len(self.terms):
+            raise ValueError("At least 1 LeastSquaresTerm must be as argument")
+
         self._init()
 
     def _init(self):
         """
-        Call collect_dofs() on the list of terms to set x, mins, maxs, names, etc.
-        This is done both when the object is created, so 'objective' works immediately,
-        and also at the start of solve()
+        Call collect_dofs() on the list of terms to set x, mins, maxs, names,
+        etc. This is done both when the object is created, so 'objective' 
+        works immediately, and also at the start of solve()
         """
         self.dofs = Dofs([t.f_in for t in self.terms])
 
@@ -117,13 +122,17 @@ class LeastSquaresProblem:
         # Delegate to Dofs:
         return self.dofs.x
 
-    def set(self, x):
+    @x.setter
+    def x(self, x):
         """
         Sets the global state vector to x.
         """
         # Delegate to Dofs:
-        self.dof.set(x)
-    
+        if x is not None:
+            self.dofs.set(x)
+        else:
+            warnings.warn("Supplied a null object as state vector. Ignoring it")
+
     def objective(self, x=None):
         """
         Return the value of the total objective function, by summing
@@ -135,13 +144,9 @@ class LeastSquaresProblem:
         global state vector to x.
         """
         logger.info("objective() called with x=" + str(x))
-        if x is not None:
-            self.dofs.set(x)
-            
-        sum = 0
-        for term in self.terms:
-            sum += term.f_out()
-        return sum
+        self.x = x
+
+        return sum(t.f_out() for t in self.terms)
 
     def f(self, x=None):
         """
@@ -157,8 +162,7 @@ class LeastSquaresProblem:
         global state vector to x.
         """
         logger.info("residuals() called with x=" + str(x))
-        if x is not None:
-            self.dofs.set(x)
+        self.x = x
 
         # Importantly for MPI, the next line calls the functions in
         # the same order that Dofs.f() does. Proc0 calls this function
@@ -169,14 +173,39 @@ class LeastSquaresProblem:
         for j in range(self.dofs.nfuncs):
             term = self.terms[j]
             end_index = start_index + self.dofs.nvals_per_func[j]
-            residuals[start_index:end_index] = (f_unscaled[start_index:end_index] - term.goal) \
-                * np.sqrt(term.weight)
+            residuals[start_index:end_index] = \
+                (f_unscaled[start_index:end_index] - term.goal) * \
+                np.sqrt(term.weight)
             start_index = end_index
-        #residuals = [(term.f_in() - term.goal) * np.sqrt(term.weight) for term in self.terms]
-        #return np.array(residuals)
+        # residuals = [(term.f_in() - term.goal) * np.sqrt(term.weight) for \
+        #               term in self.terms]
+        # return np.array(residuals)
         return residuals
         
-    def jac(self, x=None):
+    def scale_dofs_jac(self, jmat):
+        """
+        Given a Jacobian matrix j for the Dofs() associated to this
+        least-squares problem, return the scaled Jacobian matrix for
+        the least-squares residual terms. This function does not
+        actually compute the Dofs() Jacobian, since sometimes we would
+        compute that directly whereas other times we might compute it
+        with serial or parallel finite differences. The provided jmat
+        is scaled in-place.
+        """
+        logger.info("scale_dofs_jac() called")
+
+        # Scale rows by sqrt(weight):
+        start_index = 0
+        for j in range(self.dofs.nfuncs):
+            end_index = start_index + self.dofs.nvals_per_func[j]
+            #jac[j, :] = jac[j, :] * np.sqrt(self.terms[j].weight)
+            jmat[start_index:end_index, :] = jmat[start_index:end_index, :] \
+                * np.sqrt(self.terms[j].weight)
+            start_index = end_index
+            
+        return np.array(jmat)
+    
+    def jac(self, x=None, **kwargs):
         """
         This method gives the Jacobian of the residuals with respect to
         the parameters, if it is available, given the state vector
@@ -189,100 +218,23 @@ class LeastSquaresProblem:
         evaluated for the present state vector. If x is supplied, then
         first set_dofs() will be called for each object to set the
         global state vector to x.
+
+        kwargs is passed to Dofs.fd_jac().
         """
         logger.info("jac() called with x=" + str(x))
 
-        if x is not None:
-            self.dofs.set(x)
+        self.x = x
 
+        # This next bit does the hard work of evaluating the
+        # Jacobian.
+        # Bharat's comment: The conditional logic should be delegated to
+        # Bharat's comment: Dofs class
         if self.dofs.grad_avail:
-            # This next line does the hard work of evaluating the Jacobian:
             logger.debug('Calling analytic Jacobian')
-            jac = self.dofs.jac()
+            jmat = self.dofs.jac()
         else:
-            logger.debug('Calling parallel finite-difference Jacobian')
-            jac = self.dofs.fd_jac_par(self.mpi)
-            
-        # Scale rows by sqrt(weight):
-        start_index = 0
-        for j in range(self.dofs.nfuncs):
-            end_index = start_index + self.dofs.nvals_per_func[j]
-            #jac[j, :] = jac[j, :] * np.sqrt(self.terms[j].weight)
-            jac[start_index:end_index, :] = jac[start_index:end_index, :] \
-                * np.sqrt(self.terms[j].weight)
-            start_index = end_index
-            
-        return np.array(jac)
-        
-    def solve(self, grad=None):
-        """
-        Solve the nonlinear-least-squares minimization problem.
-        """
-        logger.info("Beginning solve.")
-        self._init()
-        if grad is None:
-            grad = self.dofs.grad_avail
+            logger.debug('Calling finite_difference Jacobian')
+            jmat = self.dofs.fd_jac(**kwargs)
 
-        x = np.copy(self.x) # For use in Bcast later.
-
-        # Send group leaders and workers into their respective loops
-        self.mpi.together = False
-        if self.mpi.proc0_world:
-            pass
-        elif self.mpi.proc0_groups:
-            self.mpi.leaders_loop(self.dofs)
-        else:
-            self.mpi.worker_loop(self.dofs)
-            
-        if self.mpi.proc0_world:
-            # proc0_world does this block, running the optimization.
-            x0 = np.copy(self.dofs.x)
-            #print("x0:",x0)
-            # Call scipy.optimize:
-            if grad:
-                logger.info("Using derivatives")
-                print("Using derivatives")
-                result = least_squares(self.f_proc0, x0, verbose=2, jac=self.jac_proc0)
-            else:
-                logger.info("Using derivative-free method")
-                print("Using derivative-free method")
-                result = least_squares(self.f_proc0, x0, verbose=2)
-
-            logger.info("Completed solve.")
-            x = result.x
-            self.mpi.stop_leaders() # Proc0_world stops the leaders.
-
-        if self.mpi.proc0_groups:
-            self.mpi.stop_workers() # All group leaders stop their workers.
-
-        self.mpi.together = True
-        # Finally, make sure all procs get the optimal state vector.
-        self.mpi.comm_world.Bcast(x)
-        logger.debug('After Bcast, x={}'.format(x))
-        #print("optimum x:",result.x)
-        #print("optimum residuals:",result.fun)
-        #print("optimum cost function:",result.cost)
-        # Set Parameters to their values for the optimum
-        self.dofs.set(x)
-                
-    def f_proc0(self, x):
-        """
-        Similar to f, except this version is called only by proc 0 while
-        workers are in the worker loop.
-        """
-        self.mpi.mobilize_workers(x, CALCULATE_F)
-        return self.f(x)
-
-    def jac_proc0(self, x):
-        """
-        Similar to jac, except this version is called only by proc 0 while
-        workers are in the worker loop.
-        """
-        if self.dofs.grad_avail:
-            # proc0_world calling mobilize_workers will mobilize only group 0.
-            self.mpi.mobilize_workers(x, CALCULATE_JAC)
-        else:
-            # fd_jac_par will be called
-            self.mpi.mobilize_leaders(x)
-            
-        return self.jac(x)
+        # Scale by sqrt(weight) factor:
+        return self.scale_dofs_jac(jmat)
