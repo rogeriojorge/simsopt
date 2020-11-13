@@ -327,6 +327,24 @@ class DOFs:
                     x[j] = objx[self.indices[j]]
         return x
 
+    @x.setter
+    def x(self, x):
+        """
+        Call set_dofs() for each object, given a global state vector x.
+        """
+        # Idea behind the following loops: call set_dofs exactly once
+        # once for each object, in case that improves performance at
+        # all for the optimizable objects.
+        for owner in self.all_owners:
+            # In the next line, we make sure to cast the type to a
+            # float. Otherwise get_dofs might return an array with
+            # integer type.
+            objx = np.array(owner.get_dofs(), dtype=np.dtype(float))
+            for j in range(self.nparams):
+                if self.dof_owners[j] == owner:
+                    objx[self.indices[j]] = x[j]
+            owner.set_dofs(objx)
+
     def f(self, x=None):
         """
         Return the vector of function values. Result is a 1D numpy array.
@@ -440,23 +458,6 @@ class DOFs:
         # print('difference:')
         # print(fd_jac - results)
         return results
-
-    def set(self, x):
-        """
-        Call set_dofs() for each object, given a global state vector x.
-        """
-        # Idea behind the following loops: call set_dofs exactly once
-        # once for each object, in case that improves performance at
-        # all for the optimizable objects.
-        for owner in self.all_owners:
-            # In the next line, we make sure to cast the type to a
-            # float. Otherwise get_dofs might return an array with
-            # integer type.
-            objx = np.array(owner.get_dofs(), dtype=np.dtype(float))
-            for j in range(self.nparams):
-                if self.dof_owners[j] == owner:
-                    objx[self.indices[j]] = x[j]
-            owner.set_dofs(objx)
 
     def fd_jac(self, x=None, eps=1e-7, centered=False):
         """
