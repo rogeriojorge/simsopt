@@ -1,7 +1,7 @@
 import unittest
 import os
 from simsopt.core.surface import *
-from simsopt.core.dofs import Dofs
+from simsopt.core.dofs import DOFs
 from simsopt.core.optimizable import optimizable
 from . import TEST_DIR
 
@@ -12,29 +12,67 @@ class SurfaceTests(unittest.TestCase):
         """
         # Try initializing a Surface without or with the optional
         # arguments:
-        s = Surface()
-        self.assertEqual(s.nfp, 1)
-        self.assertTrue(s.stelsym)
+        with self.assertRaises(TypeError):
+            s = Surface()
+        #self.assertEqual(s.nfp, 1)
+        #self.assertTrue(s.stelsym)
 
-        s = Surface(nfp=3)
-        self.assertEqual(s.nfp, 3)
-        self.assertTrue(s.stelsym, True)
+        #s = Surface(nfp=3)
+        #self.assertEqual(s.nfp, 3)
+        #self.assertTrue(s.stelsym, True)
 
-        s = Surface(stelsym=False)
-        self.assertEqual(s.nfp, 1)
-        self.assertFalse(s.stelsym)
+        #s = Surface(stelsym=False)
+        #self.assertEqual(s.nfp, 1)
+        #self.assertFalse(s.stelsym)
 
         # Now let's check that we can change nfp and stelsym.
-        s.nfp = 5
-        self.assertEqual(s.nfp, 5)
-        self.assertFalse(s.stelsym)
+        #s.nfp = 5
+        #self.assertEqual(s.nfp, 5)
+        #self.assertFalse(s.stelsym)
 
-        s.stelsym = True
-        self.assertEqual(s.nfp, 5)
-        self.assertTrue(s.stelsym)
+        #s.stelsym = True
+        #self.assertEqual(s.nfp, 5)
+        #self.assertTrue(s.stelsym)
 
 class SurfaceRZFourierTests(unittest.TestCase):
     def test_init(self):
+        s = SurfaceRZFourier(mpol=3, ntor=2)
+        self.assertEqual(s.nfp, 1)
+        self.assertTrue(s.stelsym)
+
+        s = SurfaceRZFourier(nfp=3, mpol=3, ntor=2)
+        self.assertEqual(s.nfp, 3)
+        self.assertTrue(s.stelsym)
+
+        s = SurfaceRZFourier(nfp=2, mpol=3, ntor=2)
+        self.assertEqual(s.rc.shape, (4, 5))
+        self.assertEqual(s.zs.shape, (4, 5))
+
+        s = SurfaceRZFourier(nfp=10, mpol=1, ntor=3, stelsym=False)
+        self.assertEqual(s.rc.shape, (2, 7))
+        self.assertEqual(s.zs.shape, (2, 7))
+        self.assertEqual(s.rs.shape, (2, 7))
+        self.assertEqual(s.zc.shape, (2, 7))
+
+    def test_area_volume(self):
+        """
+        Test the calculation of area and volume for an axisymmetric surface
+        """
+        s = SurfaceRZFourier()
+        s.rc[0, 0] = 1.3
+        s.rc[1, 0] = 0.4
+        s.zs[1, 0] = 0.2
+
+        true_area = 15.827322032265993
+        true_volume = 2.0528777154265874
+        self.assertAlmostEqual(s.area(), true_area, places=4)
+        self.assertAlmostEqual(s.volume(), true_volume, places=3)
+
+    def test_get_dofs(self):
+        """
+        Test that we can convert the degrees of freedom into a 1D vector
+        """
+
         s = SurfaceRZFourier(nfp=2, mpol=3, ntor=2)
         self.assertEqual(s.rc.shape, (4, 5))
         self.assertEqual(s.zs.shape, (4, 5))
@@ -173,7 +211,7 @@ class SurfaceRZFourierTests(unittest.TestCase):
                     # don't think this actually matters here.
                     s.set_dofs(x)
 
-                    dofs = Dofs([s.area, s.volume])
+                    dofs = DOFs.from_functions([s.area, s.volume])
                     jac = dofs.jac()
                     fd_jac = dofs.fd_jac()
                     print('difference for surface test_derivatives:', jac - fd_jac)
@@ -185,30 +223,31 @@ class SurfaceGarabedianTests(unittest.TestCase):
         Check that the default surface is what we expect, and that the
         'names' array is correctly aligned.
         """
-        s = optimizable(SurfaceGarabedian(nmin=-1, nmax=2, mmin=-2, mmax=5))
+        #s = optimizable(SurfaceGarabedian(nmin=-1, nmax=2, mmin=-2, mmax=5))
+        s = SurfaceGarabedian(nmin=-1, nmax=2, mmin=-2, mmax=5)
         self.assertAlmostEqual(s.Delta[2, 1], 0.1)
         self.assertAlmostEqual(s.Delta[3, 1], 1.0)
-        self.assertAlmostEqual(s.get('Delta(0,0)'), 0.1)
-        self.assertAlmostEqual(s.get('Delta(1,0)'), 1.0)
+        self.assertAlmostEqual(s.get_dof('Delta(0,0)'), 0.1)
+        self.assertAlmostEqual(s.get_dof('Delta(1,0)'), 1.0)
         # Verify all other elements are 0:
         d = np.copy(s.Delta)
         d[2, 1] = 0
         d[3, 1] = 0
         np.testing.assert_allclose(d, np.zeros((8, 4)))
 
-        s.set('Delta(-2,-1)', 42)
+        s.set_dof('Delta(-2,-1)', 42)
         self.assertAlmostEqual(s.Delta[0, 0], 42)
         self.assertAlmostEqual(s.get_Delta(-2, -1), 42)
 
-        s.set('Delta(5,-1)', -7)
+        s.set_dof('Delta(5,-1)', -7)
         self.assertAlmostEqual(s.Delta[7, 0], -7)
         self.assertAlmostEqual(s.get_Delta(5, -1), -7)
 
-        s.set('Delta(-2,2)', 13)
+        s.set_dof('Delta(-2,2)', 13)
         self.assertAlmostEqual(s.Delta[0, 3], 13)
         self.assertAlmostEqual(s.get_Delta(-2, 2), 13)
 
-        s.set('Delta(5,2)', -5)
+        s.set_dof('Delta(5,2)', -5)
         self.assertAlmostEqual(s.Delta[7, 3], -5)
         self.assertAlmostEqual(s.get_Delta(5, 2), -5)
         

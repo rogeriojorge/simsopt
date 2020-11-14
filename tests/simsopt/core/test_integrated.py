@@ -25,7 +25,7 @@ class IntegratedTests(unittest.TestCase):
 
             # Start with a default surface, which is axisymmetric with major
             # radius 1 and minor radius 0.1.
-            surf = optimizable(SurfaceRZFourier())
+            surf = SurfaceRZFourier()
 
             # Set initial surface shape. It helps to make zs(1,0) larger
             # than rc(1,0) since there are two solutions to this
@@ -37,14 +37,15 @@ class IntegratedTests(unittest.TestCase):
             # optimized.  You can choose to exclude any subset of the variables
             # from the space of independent variables by setting their 'fixed'
             # property to True.
-            surf.set_fixed('rc(0,0)')
+            #surf.set_fixed('rc(0,0)')
+            surf.fix_dof('rc(0,0)')
 
             # Each function you want in the objective function is then
             # equipped with a shift and weight, to become a term in a
             # least-squares objective function. A list of terms are
             # combined to form a nonlinear-least-squares problem.
             prob = LeastSquaresProblem([(surf.volume, desired_volume, 1),
-                                        (surf.area,   desired_area,   1)])
+                                        (surf.area, desired_area, 1)])
 
             # Verify the state vector and names are what we expect
             np.testing.assert_allclose(prob.x, [0.1, 0.2])
@@ -90,9 +91,12 @@ class IntegratedTests(unittest.TestCase):
             # optimized.  You can choose to exclude any subset of the variables
             # from the space of independent variables by setting their 'fixed'
             # property to True.
-            surf.all_fixed()
-            surf.set_fixed('Delta(0,0)', False) # Minor radius
-            surf.set_fixed('Delta(2,0)', False) # Elongation
+            #surf.all_fixed()
+            #surf.set_fixed('Delta(0,0)', False) # Minor radius
+            #surf.set_fixed('Delta(2,0)', False) # Elongation
+            surf.fix_all_dofs()
+            surf.unfix_dof('Delta(0,0)') # Minor radius
+            surf.unfix_dof('Delta(2,0)') # Elongation
 
             # Each function you want in the objective function is then
             # equipped with a shift and weight, to become a term in a

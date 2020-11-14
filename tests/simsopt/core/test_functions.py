@@ -2,41 +2,41 @@ import unittest
 import numpy as np
 from simsopt.core.functions import Identity, Adder, Rosenbrock, TestObject1, TestObject2
 from simsopt.core.optimizable import Target
-from simsopt.core.dofs import Dofs
+from simsopt.core.dofs import DOFs
 
 class IdentityTests(unittest.TestCase):
     def test_basic(self):
         iden = Identity()
         self.assertAlmostEqual(iden.J(), 0, places=13)
         np.testing.assert_allclose(iden.get_dofs(), np.array([0.0]))
-        np.testing.assert_allclose(iden.fixed, np.array([False]))
+        np.testing.assert_allclose(iden.dof_fixed, np.array([False]))
 
         x = 3.5
         iden = Identity(x)
         self.assertAlmostEqual(iden.J(), x, places=13)
         np.testing.assert_allclose(iden.get_dofs(), np.array([x]))
-        np.testing.assert_allclose(iden.fixed, np.array([False]))
+        np.testing.assert_allclose(iden.dof_fixed, np.array([False]))
 
         y = -2
         iden.set_dofs([y])
         self.assertAlmostEqual(iden.J(), y, places=13)
         np.testing.assert_allclose(iden.get_dofs(), np.array([y]))
-        np.testing.assert_allclose(iden.fixed, np.array([False]))
+        np.testing.assert_allclose(iden.dof_fixed, np.array([False]))
 
     def test_gradient(self):
         iden = Identity()
         for n in range(1, 10):
             iden.set_dofs([np.random.rand() * 4 - 2])
             # Supply an object to finite_difference():
-            fd_grad = Dofs([iden]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([iden]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, iden.df)
             np.testing.assert_allclose(fd_grad, iden.dJ())
             # Supply a function to finite_difference():
-            fd_grad = Dofs([iden.J]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([iden.J]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, iden.df)
             np.testing.assert_allclose(fd_grad, iden.dJ())
             # Supply an attribute to finite_difference():
-            fd_grad = Dofs([Target(iden, "f")]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([Target(iden, "f")]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, iden.df)
             np.testing.assert_allclose(fd_grad, iden.dJ())
 
@@ -46,15 +46,15 @@ class AdderTests(unittest.TestCase):
             a = Adder(n)
             a.set_dofs(np.random.rand(n) * 4 - 2)
             # Supply an object to finite_difference():
-            fd_grad = Dofs([a]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([a]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, a.df)
             np.testing.assert_allclose(fd_grad, a.dJ())
             # Supply a function to finite_difference():
-            fd_grad = Dofs([a.J]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([a.J]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, a.df)
             np.testing.assert_allclose(fd_grad, a.dJ())
             # Supply an attribute to finite_difference():
-            fd_grad = Dofs([Target(a, "f")]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([Target(a, "f")]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, a.df)
             np.testing.assert_allclose(fd_grad, a.dJ())
             #print('diff in adder gradient: ', fd_grad - a.df)
@@ -86,22 +86,22 @@ class RosenbrockTests(unittest.TestCase):
             # Test gradient of term1
             
             # Supply a function to finite_difference():
-            fd_grad = Dofs([r.term1]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([r.term1]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, r.dterm1prop, rtol=rtol, atol=atol)
             np.testing.assert_allclose(fd_grad, r.dterm1(), rtol=rtol, atol=atol)
             # Supply an attribute to finite_difference():
-            fd_grad = Dofs([Target(r, "term1prop")]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([Target(r, "term1prop")]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, r.dterm1prop, rtol=rtol, atol=atol)
             np.testing.assert_allclose(fd_grad, r.dterm1(), rtol=rtol, atol=atol)
 
             # Test gradient of term2
             
             # Supply a function to finite_difference():
-            fd_grad = Dofs([r.term2]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([r.term2]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, r.dterm2prop, rtol=rtol, atol=atol)
             np.testing.assert_allclose(fd_grad, r.dterm2(), rtol=rtol, atol=atol)
             # Supply an attribute to finite_difference():
-            fd_grad = Dofs([Target(r, "term2prop")]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([Target(r, "term2prop")]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, r.dterm2prop, rtol=rtol, atol=atol)
             np.testing.assert_allclose(fd_grad, r.dterm2(), rtol=rtol, atol=atol)
             #print('Diff in term2:', fd_grad - r.dterm2())
@@ -121,20 +121,20 @@ class TestObject1Tests(unittest.TestCase):
             rtol = 1e-4
             atol = 1e-4
 
-            dofs = Dofs([o.J])
+            dofs = DOFs.from_functions([o.J])
             #mask = np.logical_not(dofs.fixed)
             mask = np.logical_not(np.array(dofs.func_fixed[0]))
             
             # Supply a function to finite_difference():
-            fd_grad = Dofs([o.J]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([o.J]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, o.df[mask], rtol=rtol, atol=atol)
             np.testing.assert_allclose(fd_grad, o.dJ()[mask], rtol=rtol, atol=atol)
             # Supply an object to finite_difference():
-            fd_grad = Dofs([o]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([o]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, o.df[mask], rtol=rtol, atol=atol)
             np.testing.assert_allclose(fd_grad, o.dJ()[mask], rtol=rtol, atol=atol)
             # Supply an attribute to finite_difference():
-            fd_grad = Dofs([Target(o, "f")]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([Target(o, "f")]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, o.df[mask], rtol=rtol, atol=atol)
             np.testing.assert_allclose(fd_grad, o.dJ()[mask], rtol=rtol, atol=atol)
 
@@ -160,19 +160,19 @@ class TestObject2Tests(unittest.TestCase):
             rtol = 1e-4
             atol = 1e-4
             
-            dofs = Dofs([o.J])
+            dofs = DOFs.from_functions([o.J])
             mask = np.logical_not(np.array(dofs.func_fixed[0]))
 
             # Supply a function to finite_difference():
-            fd_grad = Dofs([o.J]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([o.J]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, o.df[mask], rtol=rtol, atol=atol)
             np.testing.assert_allclose(fd_grad, o.dJ()[mask], rtol=rtol, atol=atol)
             # Supply an object to finite_difference():
-            fd_grad = Dofs([o]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([o]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, o.df[mask], rtol=rtol, atol=atol)
             np.testing.assert_allclose(fd_grad, o.dJ()[mask], rtol=rtol, atol=atol)
             # Supply an attribute to finite_difference():
-            fd_grad = Dofs([Target(o, "f")]).fd_jac().flatten()
+            fd_grad = DOFs.from_functions([Target(o, "f")]).fd_jac().flatten()
             np.testing.assert_allclose(fd_grad, o.df[mask], rtol=rtol, atol=atol)
             np.testing.assert_allclose(fd_grad, o.dJ()[mask], rtol=rtol, atol=atol)
 

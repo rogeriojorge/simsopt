@@ -47,11 +47,11 @@ class LeastSquaresProblemTests(unittest.TestCase):
             iden1.x = 4
             iden2.x = 5
             iden3.x = 6
-            iden1.names = ['x1']
-            iden2.names = ['x2']
-            iden3.names = ['x3']
-            iden1.fixed = [True]
-            iden3.fixed = [True]
+            iden1.dof_names = ['x1']
+            iden2.dof_names = ['x2']
+            iden3.dof_names = ['x3']
+            iden1.dof_fixed = [True]
+            iden3.dof_fixed = [True]
             term1 = (iden1.J, 1, 1)
             term2 = (iden2.J, 2, 1 / 4.)
             term3 = (iden3.J, 3, 1 / 9.)
@@ -74,11 +74,11 @@ class LeastSquaresProblemTests(unittest.TestCase):
             iden1.x = 4
             iden2.x = 5
             iden3.x = 6
-            iden1.names = ['x1']
-            iden2.names = ['x2']
-            iden3.names = ['x3']
-            iden1.fixed = [True]
-            iden3.fixed = [True]
+            iden1.dof_names = ['x1']
+            iden2.dof_names = ['x2']
+            iden3.dof_names = ['x3']
+            iden1.dof_fixed = [True]
+            iden3.dof_fixed = [True]
             term1 = [iden1, 1, 1]
             term2 = [iden2, 2, 1 / 4.]
             term3 = [iden3, 3, 1 / 9.]
@@ -101,11 +101,11 @@ class LeastSquaresProblemTests(unittest.TestCase):
             iden1.x = 4
             iden2.x = 5
             iden3.x = 6
-            iden1.names = ['x1']
-            iden2.names = ['x2']
-            iden3.names = ['x3']
-            iden1.fixed = [True]
-            iden3.fixed = [True]
+            iden1.dof_names = ['x1']
+            iden2.dof_names = ['x2']
+            iden3.dof_names = ['x3']
+            iden1.dof_fixed = [True]
+            iden3.dof_fixed = [True]
             # Try a mix of explicit LeastSquaresTerms and tuples
             term1 = LeastSquaresTerm(Target(iden1, 'x'), 1, 1)
             term2 = (iden2, 'x', 2, 1 / 4.)
@@ -129,11 +129,11 @@ class LeastSquaresProblemTests(unittest.TestCase):
             iden1.x = 4
             iden2.x = 5
             iden3.x = 6
-            iden1.names = ['x1']
-            iden2.names = ['x2']
-            iden3.names = ['x3']
-            iden1.fixed = [True]
-            iden3.fixed = [True]
+            iden1.dof_names = ['x1']
+            iden2.dof_names = ['x2']
+            iden3.dof_names = ['x3']
+            iden1.dof_fixed = [True]
+            iden3.dof_fixed = [True]
             # Try a mix of explicit LeastSquaresTerms and lists
             term1 = [iden1, 'f', 1, 1]
             term2 = [iden2, 'f', 2, 1 / 4.]

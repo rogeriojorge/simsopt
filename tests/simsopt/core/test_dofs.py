@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from simsopt.core.dofs import get_owners, Dofs
+from simsopt.core.dofs import get_owners, DOFs
 from simsopt.core.functions import Identity, Adder, TestObject2, Rosenbrock, Affine
 from simsopt.core.optimizable import Target
 
@@ -93,14 +93,14 @@ class GetOwnersTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             get_owners(o1)
 
-class DofsTests(unittest.TestCase):
+class DOFsTests(unittest.TestCase):
     def test_no_dependents(self):
         """
         Tests for an object that does not depend on other objects.
         """
         obj = Adder(4)
         obj.set_dofs([101, 102, 103, 104])
-        dofs = Dofs([obj.J])
+        dofs = DOFs.from_functions([obj.J])
         np.testing.assert_allclose(dofs.x, [101, 102, 103, 104])
         self.assertEqual(dofs.all_owners, [obj])
         self.assertEqual(dofs.dof_owners, [obj, obj, obj, obj])
@@ -109,15 +109,15 @@ class DofsTests(unittest.TestCase):
         self.assertEqual(list(dofs.nvals_per_func), [1])
         self.assertEqual(dofs.nvals, 1)
 
-        obj.fixed = [True, False, True, False]
-        dofs = Dofs([obj.J])
+        obj.dof_fixed = [True, False, True, False]
+        dofs = DOFs.from_functions([obj.J])
         np.testing.assert_allclose(dofs.x, [102, 104])
         self.assertEqual(dofs.all_owners, [obj])
         self.assertEqual(dofs.dof_owners, [obj, obj])
         np.testing.assert_allclose(dofs.indices, [1, 3])
 
-        obj.fixed[0] = False
-        dofs = Dofs([obj.J])
+        obj.dof_fixed[0] = False
+        dofs = DOFs.from_functions([obj.J])
         np.testing.assert_allclose(dofs.x, [101, 102, 104])
         self.assertEqual(dofs.all_owners, [obj])
         self.assertEqual(dofs.dof_owners, [obj, obj, obj])
@@ -128,10 +128,10 @@ class DofsTests(unittest.TestCase):
         Test behavior when there is no 'fixed' attribute.
         """
         obj = Adder(4)
-        del obj.fixed
+        del obj.dof_fixed
         self.assertFalse(hasattr(obj, 'fixed'))
         obj.set_dofs([101, 102, 103, 104])
-        dofs = Dofs([obj.J])
+        dofs = DOFs.from_functions([obj.J])
         np.testing.assert_allclose(dofs.x, [101, 102, 103, 104])
         self.assertEqual(dofs.all_owners, [obj])
         self.assertEqual(dofs.dof_owners, [obj, obj, obj, obj])
@@ -148,7 +148,7 @@ class DofsTests(unittest.TestCase):
         o2.set_dofs([101, 102, 103, 104])
         o1.depends_on = ["o2"]
         o1.o2 = o2
-        dofs = Dofs([o1.J])
+        dofs = DOFs.from_functions([o1.J])
         np.testing.assert_allclose(dofs.x, [10, 11, 12, 101, 102, 103, 104])
         self.assertEqual(dofs.all_owners, [o1, o2])
         self.assertEqual(dofs.dof_owners, [o1, o1, o1, o2, o2, o2, o2])
@@ -157,12 +157,12 @@ class DofsTests(unittest.TestCase):
         self.assertEqual(list(dofs.nvals_per_func), [1])
         self.assertEqual(dofs.nvals, 1)
 
-        o1.fixed = [True, False, True]
-        o2.fixed = [False, False, True, True]
+        o1.dof_fixed = [True, False, True]
+        o2.dof_fixed = [False, False, True, True]
         del o1.depends_on
         o2.depends_on = ["o1"]
         o2.o1 = o1
-        dofs = Dofs([o2.J])
+        dofs = DOFs.from_functions([o2.J])
         np.testing.assert_allclose(dofs.x, [101, 102, 11])
         self.assertEqual(dofs.all_owners, [o2, o1])
         self.assertEqual(dofs.dof_owners, [o2, o2, o1])
@@ -171,13 +171,13 @@ class DofsTests(unittest.TestCase):
     def test_vector_valued(self):
         """
         For a function that returns a vector rather than a scalar, make
-        sure Dofs.f(), Dofs.jac(), and Dofs.fd_jac() behave correctly.
+        sure DOFs.f(), DOFs.jac(), and DOFs.fd_jac() behave correctly.
         """
         for nparams in range(1, 5):
             for nvals in range(1, 5):
                 o = Affine(nparams=nparams, nvals=nvals)
                 o.set_dofs((np.random.rand(nparams) - 0.5) * 4)
-                dofs = Dofs([o])
+                dofs = DOFs.from_functions([o])
                 np.testing.assert_allclose(dofs.f(), np.matmul(o.A, o.x) + o.B, \
                                            rtol=1e-13, atol=1e-13)
                 np.testing.assert_allclose(dofs.jac(), o.A, rtol=1e-13, atol=1e-13)
@@ -187,7 +187,7 @@ class DofsTests(unittest.TestCase):
     def test_multiple_vector_valued(self):
         """
         For a function that returns a vector rather than a scalar, make
-        sure Dofs.f(), Dofs.jac(), and Dofs.fd_jac() behave correctly.
+        sure DOFs.f(), DOFs.jac(), and DOFs.fd_jac() behave correctly.
         """
         for nparams1 in range(1, 5):
             for nvals1 in range(1, 5):
@@ -198,8 +198,8 @@ class DofsTests(unittest.TestCase):
                 o1 = Affine(nparams=nparams1, nvals=nvals1)
                 o2 = Affine(nparams=nparams2, nvals=nvals2)
                 o3 = Affine(nparams=nparams3, nvals=nvals3)
-                dofs = Dofs([o1, o2, o3])
-                dofs.set((np.random.rand(nparams1 + nparams2 + nparams3) - 0.5) * 4)
+                dofs = DOFs.from_functions([o1, o2, o3])
+                dofs.x = (np.random.rand(nparams1 + nparams2 + nparams3) - 0.5) * 4
                 f1 = np.matmul(o1.A, o1.x) + o1.B
                 f2 = np.matmul(o2.A, o2.x) + o2.B
                 f3 = np.matmul(o3.A, o3.x) + o3.B
@@ -217,7 +217,7 @@ class DofsTests(unittest.TestCase):
     def test_mixed_vector_valued(self):
         """
         For a mixture of functions that return a scalar vs return a
-        vector, make sure Dofs.f(), Dofs.jac(), and Dofs.fd_jac()
+        vector, make sure DOFs.f(), DOFs.jac(), and DOFs.fd_jac()
         behave correctly.
         """
         for nparams1 in range(1, 5):
@@ -231,8 +231,8 @@ class DofsTests(unittest.TestCase):
                 o3 = Affine(nparams=nparams3, nvals=nvals3)
                 a1 = Adder(n=2)
                 a2 = Adder(n=3)
-                dofs = Dofs([o1, o2, a1, o3, a2])
-                dofs.set((np.random.rand(nparams1 + nparams2 + nparams3 + 5) - 0.5) * 4)
+                dofs = DOFs.from_functions([o1, o2, a1, o3, a2])
+                dofs.x = (np.random.rand(nparams1 + nparams2 + nparams3 + 5) - 0.5) * 4
                 f1 = np.matmul(o1.A, o1.x) + o1.B
                 f2 = np.matmul(o2.A, o2.x) + o2.B
                 f3 = np.array([a1.f])
@@ -267,12 +267,12 @@ class DofsTests(unittest.TestCase):
             a = Affine(nparams=3, nvals=3)
 
             # Randomly fix some of the degrees of freedom
-            o.fixed = np.random.rand(2) > 0.5
-            o.adder.fixed = np.random.rand(2) > 0.5
-            o.t.adder1.fixed = np.random.rand(3) > 0.5
-            o.t.adder2.fixed = np.random.rand(2) > 0.5
-            r.fixed = np.random.rand(2) > 0.5
-            a.fixed = np.random.rand(3) > 0.5
+            o.dof_fixed = np.random.rand(2) > 0.5
+            o.adder.dof_fixed = np.random.rand(2) > 0.5
+            o.t.adder1.dof_fixed = np.random.rand(3) > 0.5
+            o.t.adder2.dof_fixed = np.random.rand(2) > 0.5
+            r.dof_fixed = np.random.rand(2) > 0.5
+            a.dof_fixed = np.random.rand(3) > 0.5
             
             rtol = 1e-6
             atol = 1e-6
@@ -280,19 +280,20 @@ class DofsTests(unittest.TestCase):
             for j in range(4):
                 # Try different sets of the objects:
                 if j==0:
-                    dofs = Dofs([o.J, r.terms, o.t.J])
+                    dofs = DOFs.from_functions([o.J, r.terms, o.t.J])
                     nvals = 4
                     nvals_per_func = [1, 2, 1]
                 elif j==1:
-                    dofs = Dofs([r.term2, r.terms])
+                    dofs = DOFs.from_functions([r.term2, r.terms])
                     nvals = 3
                     nvals_per_func = [1, 2]
                 elif j==2:
-                    dofs = Dofs([r.term2, Target(o.t, 'f'), r.term1, Target(o, 'f')])
+                    dofs = DOFs.from_functions(
+                        [r.term2, Target(o.t, 'f'), r.term1, Target(o, 'f')])
                     nvals = 4
                     nvals_per_func = [1, 1, 1, 1]
                 elif j==3:
-                    dofs = Dofs([a, o])
+                    dofs = DOFs.from_functions([a, o])
                     nvals = 4
                     nvals_per_func = [3, 1]
 

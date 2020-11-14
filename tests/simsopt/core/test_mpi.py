@@ -2,7 +2,7 @@ import logging
 import unittest
 import numpy as np
 from mpi4py import MPI
-from simsopt.core.dofs import Dofs
+from simsopt.core.dofs import DOFs
 from simsopt.core.least_squares_problem import LeastSquaresProblem
 from simsopt.core.mpi import MpiPartition
 from simsopt.core.mpi_solve import fd_jac_mpi, least_squares_mpi_solve
@@ -13,7 +13,7 @@ logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 class TestFunction1():
     def __init__(self):
         self.x = np.array([1.2, 0.9, -0.4])
-        self.fixed = np.full(3, False)
+        self.dof_fixed = np.full(3, False)
         
     def get_dofs(self):
         return self.x
@@ -27,7 +27,7 @@ class TestFunction1():
 class TestFunction2():
     def __init__(self):
         self.x = np.array([1.2, 0.9])
-        self.fixed = np.full(2, False)
+        self.dof_fixed = np.full(2, False)
         
     def get_dofs(self):
         return self.x
@@ -182,7 +182,7 @@ class MpiPartitionTests(unittest.TestCase):
             logger.debug('ngroups={}'.format(ngroups))
             mpi = MpiPartition(ngroups=ngroups)
             o = TestFunction1()
-            d = Dofs([o])
+            d = DOFs.from_functions([o])
             logger.debug('About to do worker loop 1')
             jac = fd_jac_mpi(d, mpi, centered=False, eps=1e-7)
             jac_reference = np.array([[5.865176283537110e-01, -6.010834349701177e-01, 2.250910244305793e-01]])
@@ -207,7 +207,7 @@ class MpiPartitionTests(unittest.TestCase):
 
             # Now try a case with different nparams and nfuncs.
             o = TestFunction2()
-            d = Dofs([o.f0, o.f1, o.f2, o.f3])
+            d = DOFs.from_functions([o.f0, o.f1, o.f2, o.f3])
             logger.debug('About to do worker loop 3')
             jac = fd_jac_mpi(d, mpi, centered=False, eps=1e-7)
             jac_reference = np.array([[8.657715439008840e-01, -8.872724499564555e-01],
