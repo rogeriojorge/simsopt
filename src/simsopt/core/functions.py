@@ -23,8 +23,8 @@ class Identity(Optimizable):
     def __init__(self, x=0.0):
         self.x = x
         self.dx = np.array([1.0])
-        self.fixed = np.full(1, False)
-        self.names = ['x']
+        self.dof_fixed = np.full(1, False)
+        self.dof_names = ['x']
 
     def J(self):
         return self.x
@@ -61,7 +61,7 @@ class Adder(Optimizable):
     def __init__(self, n=3):
         self.n = n
         self.x = np.zeros(n)
-        self.fixed = np.full(n, False)        
+        self.dof_fixed = np.full(n, False)
 
     def J(self):
         """
@@ -103,10 +103,10 @@ class Rosenbrock(Optimizable):
 
     def __init__(self, b=100.0, x=0.0, y=0.0):
         self._sqrtb = np.sqrt(b)
-        self.names = ['x', 'y']
+        self.dof_names = ['x', 'y']
         self._x = x
         self._y = y
-        self.fixed = np.full(2, False)        
+        self.dof_fixed = np.full(2, False)
 
     def term1(self):
         """
@@ -195,8 +195,8 @@ class TestObject1(Optimizable):
     """
     def __init__(self, val):
         self.val = val
-        self.names = ['val']
-        self.fixed = np.array([False])
+        self.dof_names = ['val']
+        self.dof_fixed = np.array([False])
         self.adder1 = Adder(3)
         self.adder2 = Adder(2)
         self.depends_on = ['adder1', 'adder2']
@@ -241,8 +241,8 @@ class TestObject2(Optimizable):
     def __init__(self, val1, val2):
         self.val1 = val1
         self.val2 = val2
-        self.names = ['val1', 'val2']
-        self.fixed = np.array([False, False])
+        self.dof_names = ['val1', 'val2']
+        self.dof_fixed = np.array([False, False])
         self.t = TestObject1(0.0)
         self.adder = Adder(2)
         self.depends_on = ['t', 'adder']

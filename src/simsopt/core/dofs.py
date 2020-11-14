@@ -310,6 +310,8 @@ class DOFs:
         dofs.grad_avail = grad_avail
         dofs.grad_funcs = grad_funcs
 
+        return dofs
+
     @property
     def x(self):
         """
@@ -355,7 +357,7 @@ class DOFs:
         global state vector to x.
         """
         if x is not None:
-            self.set(x)
+            self.x = x
 
         # Autodetect whether the functions return scalars or vectors.
         # For now let's do this on every function eval for
@@ -390,7 +392,7 @@ class DOFs:
             raise RuntimeError('Gradient information is not available for this Dofs()')
 
         if x is not None:
-            self.set(x)
+            self.x = x
 
         # grads = [np.array(f()) for f in self.grad_funcs]
 
@@ -475,7 +477,7 @@ class DOFs:
         """
 
         if x is not None:
-            self.set(x)
+            self.x = x
 
         logger.info('Beginning finite difference gradient calculation for functions ' + str(self.funcs))
 
@@ -503,7 +505,7 @@ class DOFs:
                 x = np.copy(x0)
 
                 x[j] = x0[j] + eps
-                self.set(x)
+                self.x = x
                 # fplus = np.array([f() for f in self.funcs])
                 fplus = self.f()
                 if jac is None:
@@ -512,7 +514,7 @@ class DOFs:
                     jac = np.zeros((self.nvals, self.nparams))
 
                 x[j] = x0[j] - eps
-                self.set(x)
+                self.x = x
                 fminus = self.f()
 
                 jac[:, j] = (fplus - fminus) / (2 * eps)
@@ -524,12 +526,12 @@ class DOFs:
             for j in range(self.nparams):
                 x = np.copy(x0)
                 x[j] = x0[j] + eps
-                self.set(x)
+                self.x = x
                 fplus = self.f()
 
                 jac[:, j] = (fplus - f0) / eps
 
         # Weird things may happen if we do not reset the state vector
         # to x0:
-        self.set(x0)
+        self.x = x0
         return jac
