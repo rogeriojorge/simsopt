@@ -13,7 +13,7 @@ import warnings
 
 from scipy.optimize import least_squares
 from mpi4py import MPI
-from .dofs import Dofs
+from .dofs import DOFs
 from .util import isnumber
 from .optimizable import function_from_user, Target
 
@@ -112,14 +112,14 @@ class LeastSquaresProblem:
         etc. This is done both when the object is created, so 'objective' 
         works immediately, and also at the start of solve()
         """
-        self.dofs = Dofs([t.f_in for t in self.terms])
+        self.dofs = DOFs.from_functions([t.f_in for t in self.terms])
 
     @property
     def x(self):
         """
         Return the state vector.
         """
-        # Delegate to Dofs:
+        # Delegate to DOFs:
         return self.dofs.x
 
     @x.setter
@@ -127,9 +127,9 @@ class LeastSquaresProblem:
         """
         Sets the global state vector to x.
         """
-        # Delegate to Dofs:
+        # Delegate to DOFs:
         if x is not None:
-            self.dofs.set(x)
+            self.dofs.x = x
         else:
             warnings.warn("Supplied a null object as state vector. Ignoring it")
 
@@ -153,7 +153,7 @@ class LeastSquaresProblem:
         This method returns the vector of residuals for a given state
         vector x.  This function is passed to scipy.optimize, and
         could be passed to other optimization algorithms too.  This
-        function differs from Dofs.f() because it shifts and scales
+        function differs from DOFs.f() because it shifts and scales
         the terms.
 
         If the argument x is not supplied, the residuals will be
@@ -165,8 +165,8 @@ class LeastSquaresProblem:
         self.x = x
 
         # Importantly for MPI, the next line calls the functions in
-        # the same order that Dofs.f() does. Proc0 calls this function
-        # whereas worker procs call Dofs.f().
+        # the same order that DOFs.f() does. Proc0 calls this function
+        # whereas worker procs call DOFs.f().
         f_unscaled = self.dofs.f()
         residuals = np.zeros(len(f_unscaled))
         start_index = 0
@@ -184,10 +184,10 @@ class LeastSquaresProblem:
         
     def scale_dofs_jac(self, jmat):
         """
-        Given a Jacobian matrix j for the Dofs() associated to this
+        Given a Jacobian matrix j for the DOFs() associated to this
         least-squares problem, return the scaled Jacobian matrix for
         the least-squares residual terms. This function does not
-        actually compute the Dofs() Jacobian, since sometimes we would
+        actually compute the DOFs() Jacobian, since sometimes we would
         compute that directly whereas other times we might compute it
         with serial or parallel finite differences. The provided jmat
         is scaled in-place.
@@ -211,7 +211,7 @@ class LeastSquaresProblem:
         the parameters, if it is available, given the state vector
         x. This function is passed to scipy.optimize, and could be
         passed to other optimization algorithms too. This Jacobian
-        differs from the one returned by Dofs() because it accounts
+        differs from the one returned by DOFs() because it accounts
         for the 'weight' scale factors.
 
         If the argument x is not supplied, the Jacobian will be
@@ -219,7 +219,7 @@ class LeastSquaresProblem:
         first set_dofs() will be called for each object to set the
         global state vector to x.
 
-        kwargs is passed to Dofs.fd_jac().
+        kwargs is passed to DOFs.fd_jac().
         """
         logger.info("jac() called with x=" + str(x))
 
@@ -228,7 +228,7 @@ class LeastSquaresProblem:
         # This next bit does the hard work of evaluating the
         # Jacobian.
         # Bharat's comment: The conditional logic should be delegated to
-        # Bharat's comment: Dofs class
+        # Bharat's comment: DOFs class
         if self.dofs.grad_avail:
             logger.debug('Calling analytic Jacobian')
             jmat = self.dofs.jac()

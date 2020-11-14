@@ -12,7 +12,7 @@ from mpi4py import MPI
 import numpy as np
 from scipy.optimize import least_squares
 import logging
-from .dofs import Dofs
+#from .dofs import DOFs
 from .util import isnumber
 from .optimizable import function_from_user, Target
 
@@ -41,7 +41,7 @@ def mpi_leaders_task(mpi, dofs, data):
     # root=0)
     x = mpi.comm_leaders.bcast(x, root=0)
     logger.debug('mpi_leaders_loop x={}'.format(x))
-    dofs.set(x)
+    dofs.x = x
     fd_jac_mpi(dofs, mpi)
     
             
@@ -60,7 +60,7 @@ def mpi_workers_task(mpi, dofs, data):
     # root=0)
     x = mpi.comm_groups.bcast(x, root=0)
     logger.debug('worker_loop worker x={}'.format(x))
-    dofs.set(x)
+    dofs.x = x
 
     # We don't store or do anything with f() or jac(), because
     # the group leader will handle that.
@@ -103,7 +103,7 @@ def fd_jac_mpi(dofs, mpi, x=None, eps=1e-7, centered=False):
     # Only group leaders execute this next section.
 
     if x is not None:
-        dofs.set(x)
+        dofs.x = x
 
     logger.info('Beginning parallel finite difference gradient calculation for functions ' + str(dofs.funcs))
 
@@ -152,7 +152,7 @@ def fd_jac_mpi(dofs, mpi, x=None, eps=1e-7, centered=False):
             mpi.mobilize_workers(CALCULATE_F)
             x = xs[:, j]
             mpi.comm_groups.bcast(x, root=0)
-            dofs.set(x)
+            dofs.x = x
             f = dofs.f()
             if evals is None and mpi.proc0_world:
                 dofs.nvals = mpi.comm_leaders.bcast(dofs.nvals)
@@ -182,7 +182,7 @@ def fd_jac_mpi(dofs, mpi, x=None, eps=1e-7, centered=False):
 
     # Weird things may happen if we do not reset the state vector
     # to x0:
-    dofs.set(x0)
+    dofs.x = x0
     return jac
 
 
@@ -271,5 +271,5 @@ def least_squares_mpi_solve(prob, mpi, grad=None):
     #print("optimum residuals:",result.fun)
     #print("optimum cost function:",result.cost)
     # Set Parameters to their values for the optimum
-    prob.dofs.set(x)
+    prob.dofs.x = x
 
