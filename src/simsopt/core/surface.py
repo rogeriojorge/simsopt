@@ -9,6 +9,7 @@ corresponding to different discrete representations.
 """
 import numpy as np
 import logging
+import abc
 from jax.config import config
 config.update("jax_enable_x64", True) # Use double precision:
 
@@ -108,7 +109,8 @@ darea_volume_pure = jacrev(area_volume_pure, argnums=(0, 1, 2, 3))
 # repo. If surface.py is moved to simsgeo, we would no longer have
 # Surface subclass Optimizable. As a result we might need to add
 # optimizable() in a few places, such as vmec.py.
-class Surface(Optimizable):
+
+class Surface(abc.ABC):
     """
     Surface is a base class for various representations of toroidal
     surfaces in simsopt.
@@ -126,16 +128,17 @@ class Surface(Optimizable):
         return "Surface " + str(hex(id(self))) + " (nfp=" + str(self.nfp) \
                + ", stelsym=" + str(self.stelsym) + ")"
 
+    @abc.abstractmethod
     def to_RZFourier(self):
         """
         Return a SurfaceRZFourier instance corresponding to the shape of this
         surface.  All subclasses should implement this abstract
         method.
         """
-        raise NotImplementedError
+        #raise NotImplementedError
 
 
-class SurfaceRZFourier(Surface):
+class SurfaceRZFourier(Surface, Optimizable):
     """
     SurfaceRZFourier is a surface that is represented in cylindrical
     coordinates using the following Fourier series: 
@@ -158,11 +161,11 @@ class SurfaceRZFourier(Surface):
         #    raise TypeError("mpol must have type int")
         #if not isinstance(ntor, int):
         #    raise TypeError("ntor must have type int")
+        super().__init__(nfp=nfp, stelsym=stelsym)
         if mpol < 1:
             raise ValueError("mpol must be at least 1")
         if ntor < 0:
             raise ValueError("ntor must be at least 0")
-        super().__init__(self, nfp=nfp, stelsym=stelsym)
         self.mpol = mpol
         self.ntor = ntor
         self.allocate()
@@ -193,12 +196,12 @@ class SurfaceRZFourier(Surface):
 
         self.rc = np.zeros(myshape)
         self.zs = np.zeros(myshape)
-        self.names = self.make_names('rc', True) + self.make_names('zs', False)
+        self.dof_names = self.make_names('rc', True) + self.make_names('zs', False)
 
         if not self.stelsym:
             self.rs = np.zeros(myshape)
             self.zc = np.zeros(myshape)
-            self.names += self.make_names('rs', False) + self.make_names('zc', True)
+            self.dof_names += self.make_names('rs', False) + self.make_names('zc', True)
 
     def make_names(self, prefix, include0):
         """
@@ -635,7 +638,7 @@ class SurfaceRZFourier(Surface):
         return s
 
     
-class SurfaceGarabedian(Surface):
+class SurfaceGarabedian(Surface, Optimizable):
     """
     SurfaceGarabedian represents a toroidal surface for which the
     shape is parameterized using Garabedian's Delta_{m,n}
@@ -657,7 +660,7 @@ class SurfaceGarabedian(Surface):
             raise ValueError("mmax must be >= 1")
         if mmin > 0:
             raise ValueError("mmin must be <= 0")
-        Surface.__init__(self, nfp=nfp, stelsym=True)
+        super().__init__(nfp=nfp, stelsym=True)
         self.mmin = mmin
         self.mmax = mmax
         self.nmin = nmin
@@ -686,10 +689,10 @@ class SurfaceGarabedian(Surface):
         self.ndim = self.nmax - self.nmin + 1
         myshape = (self.mdim, self.ndim)
         self.Delta = np.zeros(myshape)
-        self.names = []
+        self.dof_names = []
         for n in range(self.nmin, self.nmax + 1):
             for m in range(self.mmin, self.mmax + 1):
-                self.names.append('Delta(' + str(m) + ',' + str(n) + ')')
+                self.dof_names.append('Delta(' + str(m) + ',' + str(n) + ')')
 
     def get_Delta(self, m, n):
         """
