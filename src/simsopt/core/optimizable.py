@@ -47,14 +47,14 @@ class Optimizable(metaclass=abc.ABCMeta):
         """
         return self.dof_names.index(dof_str)
 
-    def get_dof_by_name(self, dof_str):
+    def get_dof(self, dof_str):
         """
         Return a degree of freedom specified by its string name.
         """
         x = self.get_dofs()
         return x[self.index(dof_str)]
 
-    def set_dof_by_name(self, dof_str, newval):
+    def set_dof(self, dof_str, newval):
         """
         Set a degree of freedom specified by its string name.
         """
@@ -159,9 +159,17 @@ def optimizable(obj):
         obj.mins = np.full(n, np.NINF)
     if not hasattr(obj, 'maxs'):
         obj.maxs = np.full(n, np.Inf)
+
     # Add the following methods from the Optimizable class:
-    for method in ['index', 'get', 'set', 'get_fixed', 'set_fixed', 'all_fixed']:
+    #for method in ['index', 'get', 'set', 'get_fixed', 'set_fixed', 'all_fixed']:
         # See https://stackoverflow.com/questions/972/adding-a-method-to-an-existing-object-instance
-        setattr(obj, method, types.MethodType(getattr(Optimizable, method), obj))
+        #setattr(obj, method, types.MethodType(getattr(Optimizable, method), obj))
+
+    # New compact implementation
+    method_list = [f for f in dir(Optimizable) if \
+            callable(getattr(Optimizable, f)) and not f.startswith("__")]
+    for f in method_list:
+        if not hasattr(obj, f) and f not in ('get_dofs', 'set_dofs'):
+            setattr(obj, f, types.MethodType(getattr(Optimizable, f), obj))
 
     return obj
