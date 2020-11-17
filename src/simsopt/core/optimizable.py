@@ -40,57 +40,67 @@ class Optimizable(metaclass=abc.ABCMeta):
         :return:
         """
 
+    @property
+    def dofs(self):
+        if not self._dofs:
+            self._dofs = self.get_dofs()
+        return self._dofs
+
+    @dofs.setter
+    def dofs(self, dofs):
+        self._dofs = dofs
+
     def index(self, dof_str):
         """
         Returns the index in the dof array whose name matches dof_str. 
         If not found, ValueError will be raised.
         """
-        return self.dof_names.index(dof_str)
+        dof = self.dofs[dof_str]
+        return self.dofs.index(dof)
 
     def get_dof(self, dof_str):
         """
         Return a degree of freedom specified by its string name.
         """
-        x = self.get_dofs()
-        return x[self.index(dof_str)]
+        return self.dofs[dof_str]
 
     def set_dof(self, dof_str, newval):
         """
         Set a degree of freedom specified by its string name.
         """
-        x = self.get_dofs()
-        x[self.index(dof_str)] = newval
-        self.set_dofs(x)
+        self.dofs[dof_str] = newval
 
     def is_dof_fixed(self, dof_str):
         """
         Identifies if the fixed attribute for a given DOF is set
         """
-        return self.dof_fixed[self.index(dof_str)]
+        return self.dofs[dof_str].is_fixed()
         
     def fix_dof(self, dof_str):
         """
         Set the fixed attribute for a given degree of freedom, specified by dof_str.
         """
-        self.dof_fixed[self.index(dof_str)] = True
+        self.dofs[dof_str].fix()
 
     def unfix_dof(self, dof_str):
         """
         Set the fixed attribute for a given degree of freedom, specified by dof_str.
         """
-        self.dof_fixed[self.index(dof_str)] = False
+        self.dofs[dof_str].unfix()
 
     def fix_all_dofs(self):
         """
         Set the 'fixed' attribute for all degrees of freedom.
         """
-        self.dof_fixed = np.full(len(self.get_dofs()), True)
-        
+        #self.dof_fixed = np.full(len(self.get_dofs()), True)
+        self.dofs.fix_all()
+
     def unfix_all_dofs(self):
         """
         Set the 'fixed' attribute for all degrees of freedom.
         """
-        self.dof_fixed = np.full(len(self.get_dofs()), False)
+        #self.dof_fixed = np.full(len(self.get_dofs()), False)
+        self.dofs.unfix_all()
         
 def function_from_user(target):
     """
@@ -99,6 +109,7 @@ def function_from_user(target):
     """
     if callable(target):
         return target
+    # The method J is to conform with sismgeo
     elif hasattr(target, 'J') and callable(target.J):
         return target.J
     else:

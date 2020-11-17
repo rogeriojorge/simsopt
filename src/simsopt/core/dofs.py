@@ -12,6 +12,8 @@ This module should not depend on anything involving communication
 
 import logging
 import numpy as np
+import collections
+import copy
 from mpi4py import MPI
 
 from .optimizable import function_from_user
@@ -38,13 +40,17 @@ def get_owners(obj, owners_so_far=[]):
     return owners
 
 
-class DOF():
+class DOF(collections.abc.Hashable):
     """
     A generalized class to represent an individual degrees of freedom
     associated with optimizable functions.
     """
 
-    def __init__(self, name=None, fixed=False, lower_bound=np.NINF,
+    def __init__(self,
+                 owner,
+                 name,
+                 fixed=False,
+                 lower_bound=np.NINF,
                  upper_bound=np.Inf):
         """
 
@@ -53,46 +59,46 @@ class DOF():
         :param lower_bound: Minimum allowed value of DOF
         :param upper_bound: Maximum allowed value of DOF
         """
-        self._name = name
+        self.owner = owner
+        self.name = name
         self._fixed = fixed
         self._lb = lower_bound
         self._ub = upper_bound
 
+    def __hash__(self):
+        return hash(":".join(map(str, [self.owner, self.name])))
+
     @property
-    def name(self):
-        """
-        Name of DOF
-
-        :return: Name of the DOF for easy access
-        """
-        return self._name
-
-    @name.setter
-    def name(self, name):
-        """
-        Set the name of DOF
-
-        :param name: Name of the DOF
-        """
-        self._name = name
+    def extended_name(self):
+        return ":".join(map(str, [self.owner, self.name]))
 
     def is_fixed(self):
         """
-        Is the DOF fixed
+        Checks ifs the DOF is fixed
 
-        :return: True if DOF is fixed else False
+        Returns:
+            True if DOF is fixed else False
         """
         return self._fixed
 
+    def is_free(self):
+        """
+        Checks ifs the DOF is fixed
+
+        Returns:
+            True if DOF is fixed else False
+        """
+        return not self._fixed
+
     def fix(self):
         """
-        Restrict the DOF to a fixed value
+        Denotes that the DOF needs to be fixed during optimization
         """
         self._fixed = True
 
     def unfix(self):
         """
-        Make the DOF variable
+        Denotes that the DOF can be varied during optimization
         """
         self._fixed = False
 
@@ -123,14 +129,19 @@ class DOF():
         self._ub = upper_bound
 
 
-class DOFs:
+class DOFs(collections.abc.MutableSequence):
     """
-    This class holds data related to the vector of degrees of freedom
-    that have been combined from multiple optimizable objects, keeping
-    only the non-fixed dofs.
-    """
+    Defines the (D)egrees (O)f (F)reedom(s) for optimization
 
-    def __init__(self, names, fixed=None, lower_bounds=None, upper_bounds=None):
+    This class holds data related to the vector of degrees of freedom
+    that have been combined from multiple optimizable objects.
+    """
+    def __init__(self,
+                 owners,
+                 names,
+                 fixed=False,
+                 lower_bounds=None,
+                 upper_bounds=None):
         """
 
         :param names: Names of the DOFs
@@ -140,18 +151,19 @@ class DOFs:
         :param upper_bounds: Upper bounds for the DOFs. Meaningful only if
                 DOF is not fixed. Default is np.inf
         """
-        if fixed and (len(names) != len(fixed)):
-            raise IndexError("The length of `fixed' should be equal to "
-                             "the length of 'names'.")
-        if lower_bounds and (len(names) != len(lower_bounds)):
-            raise IndexError("The length of `lower_bounds' should be equal to "
-                             "the length of 'names'.")
-        if upper_bounds and (len(names) != len(upper_bounds)):
-            raise IndexError("The length of `upper_bounds' should be equal to "
-                             "the length of 'names'.")
+        #if fixed and (len(names) != len(fixed)):
+        #    raise IndexError("The length of `fixed' should be equal to "
+        #                     "the length of 'names'.")
+        #if lower_bounds and (len(names) != len(lower_bounds)):
+        #    raise IndexError("The length of `lower_bounds' should be equal to "
+        #                     "the length of 'names'.")
+        #if upper_bounds and (len(names) != len(upper_bounds)):
+        #    raise IndexError("The length of `upper_bounds' should be equal to "
+        #                     "the length of 'names'.")
         self._dofs = []
+        self._dofs_map = {}
         for i, name in enumerate(names):
-            if fixed and not fixed[i]:  # Fixed sequence is defined
+            if (fixed and not fixed[i]) or not fixed:  # Fixed sequence is defined
                 if lower_bounds:
                     lb = lower_bounds[i]
                 else:
@@ -160,12 +172,189 @@ class DOFs:
                     ub = upper_bounds[i]
                 else:
                     ub = None
-                self._dofs.append(DOF(names[i], lower_bound=lb, upper_bound=ub))
+                dof = DOF(owners[i], names[i], lower_bound=lb, upper_bound=ub)
+            else:
+                dof = DOF(owners[i], names[i], fixed=fixed[i])
+            self._dofs.append(dof)
+            self._dofs_map[dof.extended_name] = dof
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._dofs[key]
+        elif isinstance(key, str): # Implement string indexing
+            return self._dofs_map[key]
+        else:
+            raise TypeError("Wrong type as index. Supply either an integer"
+                            " or string for index.")
+
+    def __setitem__(self, key, value):
+        if isinstance(key, int):
+            prev_dof = self._dofs[key]
+            self._dofs[key] = value
+            self._dofs_map[prev_dof.extended_name] = value
+        elif isinstance(key, str):
+            try:
+                prev_dof = self._dofs_map[key]
+                self._dofs_map[key] = value
+                i = self._dofs.index(prev_dof)
+                self._dofs[i] = value
+            except:
+                self._dofs_map[key] = value
+                self._dofs.append(value)
+        else:
+            raise TypeError("Wrong type as index. Supply either an integer"
+                            " or string for index.")
+
+    def __delitem__(self, key):
+        if isinstance(key, int):
+            dof = self._dofs[key]
+            del self._dofs[key]
+            del self._dofs_map[dof.extended_name]
+        elif isinstance(key, str):
+            dof = self._dofs_map[key]
+            del self._dofs_map[key]
+            del self._dofs[self._dofs.index(dof)]
+        else:
+            raise TypeError("Wrong type as index. Supply either an integer"
+                            " or string for index.")
+
+    def __len__(self):
+        return len(self._dofs)
+
+    def __contains__(self, item):
+        return item in self._dofs
+
+    def __iter__(self):
+        return self._dofs.__iter__()
+
+    def __reversed__(self):
+        pass
+
+    def insert(self, index, value):
+        self._dofs.insert(index, value)
+        self._dofs_map[value.extend_name] = value
+
+    def reverse(self):
+        self._dofs.reverse()
+
+    def extend(self, other_dofs):
+        self._dofs.extend(other_dofs._dofs)
+        for dof in other_dofs:
+            self._dofs_map[dof.extended_name] = dof
+
+    def pop(self, index=None):
+        if index is None:
+            dof = self._dofs.pop()
+        else:
+            dof = self._dofs.pop(index)
+        del self._dofs_map[dof.extended_name]
+        return dof
+
+    def remove(self, value):
+        self._dofs.remove(value)
+        del self._dofs_map[value.extend_name]
+
+    def __add__(self, other):
+        return self._dofs + other._dofs
+        for dof in other:
+            self._dofs_map[dof.extended_name] = dof
+
+    def fix_all(self):
+        for dof in self._dofs:
+            dof.fix()
+
+    def unfix_all(self):
+        for dof in self._dofs:
+            dof.unfix()
+
+    def any_free(self):
+        """
+        Checks for any free DOFs
+
+        Returns:
+            True if any free DOF is found
+        """
+        return any(dof.is_free() for dof in self._dofs)
+
+    def any_fixed(self):
+        """
+        Checks for any free DOFs
+
+        Returns:
+            True if any fixed DOF is found
+        """
+        return any(dof.is_fixed() for dof in self._dofs)
+
+    def all_free(self):
+        """
+        Checks for any free DOFs
+
+        Returns:
+            True if all DOFs are free to vary
+        """
+        return all(dof.is_fixed() for dof in self._dofs)
+
+    def all_fixed(self):
+        """
+        Checks for any free DOFs
+
+        Returns:
+            True if all DOFs are fixed
+        """
+        return all(dof.is_fixed() for dof in self._dofs)
+
+    def without_fixed(self):
+        """
+        Prune fixed DOFs from the DOFs object and return the free DOFs
+
+        Returns:
+            Pruned DOFs object without any fixed DOFs
+        """
+        dofs = copy.copy(self)
+        for i, dof in enumerate(dofs):
+            dofs.remove(dof)
+        return dofs
 
     @classmethod
-    def from_functions(cls, funcs):
+    def dofs_from_function(cls, func):
         """
-        Given a list of optimizable functions, 
+        Returns a list of DOFs from a function
+
+        This class method returns the list of DOFs from a given optimizable
+        function. The optimizable function is expected to be a method from
+        sub-classes of Optimizable. If a generic function is given, an
+        attempt is made to identify the DOFs in the function
+
+        Args:
+            func: Function expected to be optimized
+
+        Returns:
+            List of DOFs (object of DOFs class)
+        """
+        # Convert user-supplied function-like things to actual functions:
+        func = function_from_user(func)
+        try:
+            dofs = func.__self__.get_dofs()
+            return dofs
+        except: # We will do further processing
+            pass
+
+        # First, get a list of the objects and any objects they depend on:
+        owners = get_owners(func.__self__)
+
+        # Eliminate duplicates, preserving order:
+        owners = unique(owners)
+
+    @classmethod
+    def free_dofs_from_functions(cls, funcs):
+        """
+        Returns a list of variable DOFs from a list of optimizables
+
+        This class method returns the list of free DOFs from a given list
+        of optimizable functions. The optimizable functions are expected to
+        be methods from sub-classes of Optimizable. If a generic function
+        is present (not from Optimizable class), an attempt is made to
+        identify DOFs in the function
 
         funcs: A list/set/tuple of callable functions.
 
@@ -205,40 +394,40 @@ class DOFs:
         maxs = []
         names = []
         fixed_merged = []
-        for owner in all_owners:
-            ox = owner.get_dofs()
-            ndofs = len(ox)
+        #for owner in all_owners:
+        #    ox = owner.get_dofs()
+        #    ndofs = len(ox)
             # If 'fixed' is not present, assume all dofs are not fixed
-            if hasattr(owner, 'fixed'):
-                fixed = list(owner.fixed)
-            else:
-                fixed = [False] * ndofs
-            fixed_merged += fixed
+            #if hasattr(owner, 'fixed'):
+            #    fixed = list(owner.fixed)
+            #else:
+            #    fixed = [False] * ndofs
+            #fixed_merged += fixed
 
             # Check for bound constraints:
-            if hasattr(owner, 'mins'):
-                omins = owner.mins
-            else:
-                omins = np.full(ndofs, np.NINF)
-            if hasattr(owner, 'maxs'):
-                omaxs = owner.maxs
-            else:
-                omaxs = np.full(ndofs, np.Inf)
+            #if hasattr(owner, 'mins'):
+            #    omins = owner.mins
+            #else:
+            #    omins = np.full(ndofs, np.NINF)
+            #if hasattr(owner, 'maxs'):
+            #    omaxs = owner.maxs
+            #else:
+            #    omaxs = np.full(ndofs, np.Inf)
 
             # Check for names:
-            if hasattr(owner, 'names'):
-                onames = [name + ' of ' + str(owner) for name in owner.names]
-            else:
-                onames = ['x[{}] of {}'.format(k, owner) for k in range(ndofs)]
+            #if hasattr(owner, 'names'):
+            #    onames = [name + ' of ' + str(owner) for name in owner.names]
+            #else:
+            #    onames = ['x[{}] of {}'.format(k, owner) for k in range(ndofs)]
 
-            for jdof in range(ndofs):
-                if not fixed[jdof]:
-                    x.append(ox[jdof])
-                    dof_owners.append(owner)
-                    indices.append(jdof)
-                    names.append(onames[jdof])
-                    mins.append(omins[jdof])
-                    maxs.append(omaxs[jdof])
+            #for jdof in range(ndofs):
+            #    if not fixed[jdof]:
+            #        x.append(ox[jdof])
+            #        dof_owners.append(owner)
+            #        indices.append(jdof)
+            #        names.append(onames[jdof])
+            #        mins.append(omins[jdof])
+            #        maxs.append(omaxs[jdof])
 
         # Now repeat the process we just went through, but for only a
         # single element of funcs. The results will be needed to
@@ -252,30 +441,30 @@ class DOFs:
         # even if they are fixed. It turns out that this is the
         # information needed to convert the individual function
         # gradients into the global Jacobian.
-        for func in funcs:
-            owners = get_owners(func.__self__)
-            f_dof_owners = []
-            f_indices = []
-            f_fixed = []
-            for owner in owners:
-                ox = owner.get_dofs()
-                ndofs = len(ox)
-                # If 'fixed' is not present, assume all dofs are not fixed
-                if hasattr(owner, 'fixed'):
-                    fixed = list(owner.fixed)
-                else:
-                    fixed = [False] * ndofs
-                f_fixed += fixed
+        #for func in funcs:
+        #    owners = get_owners(func.__self__)
+        #    f_dof_owners = []
+        #    f_indices = []
+        #    f_fixed = []
+        #    for owner in owners:
+        #        ox = owner.get_dofs()
+        #        ndofs = len(ox)
+        #        # If 'fixed' is not present, assume all dofs are not fixed
+        #        if hasattr(owner, 'fixed'):
+        #            fixed = list(owner.fixed)
+        #        else:
+        #            fixed = [False] * ndofs
+        #        f_fixed += fixed
 
-                for jdof in range(ndofs):
-                    f_dof_owners.append(owner)
-                    f_indices.append(jdof)
-                    # if not fixed[jdof]:
-                    #    f_dof_owners.append(owner)
-                    #    f_indices.append(jdof)
-            func_dof_owners.append(f_dof_owners)
-            func_indices.append(f_indices)
-            func_fixed.append(f_fixed)
+        #        for jdof in range(ndofs):
+        #            f_dof_owners.append(owner)
+        #            f_indices.append(jdof)
+        #            # if not fixed[jdof]:
+        #            #    f_dof_owners.append(owner)
+        #            #    f_indices.append(jdof)
+        #    func_dof_owners.append(f_dof_owners)
+        #    func_indices.append(f_indices)
+        #    func_fixed.append(f_fixed)
 
         # Check whether derivative information is available:
         grad_avail = True
