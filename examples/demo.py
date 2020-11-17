@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
+import logging
 import sys
 sys.path.append('..')
 from simsopt import *
-import logging
+from simsopt.core.serial_solve import least_squares_serial_solve
 
 """                                                                           
 Minimize f(x,y,z) = ((x-1)/1)^2 + ((y-2)/2)^2 + ((z-3)/3)^2.                  
@@ -37,9 +38,11 @@ term3 = LeastSquaresTerm(iden3.J, 3, 3)
 
 # A list of terms are combined to form a nonlinear-least-squares problem.
 prob = LeastSquaresProblem([term1, term2, term3])
+print("Initial x values are ", prob.x)
 
 # Solve the minimization problem:
-prob.solve()
+#prob.solve()
+least_squares_serial_solve(prob)
 
 print("An optimum was found at x=", iden1.x, ", y=", iden2.x, \
           ", z=", iden3.x)
