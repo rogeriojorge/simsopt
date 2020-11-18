@@ -20,13 +20,13 @@ class Identity(Optimizable):
     the identity. It has one degree of freedom, and the output of the function
     is equal to this degree of freedom.
     """
-    def __init__(self, x=0.0):
+    def __init__(self, x=0.0, fixed=False, dof_name=None):
         self.x = x
         self.dx = np.array([1.0])
         self.dof_fixed = np.full(1, False)
         self.dof_names = ['x']
 
-    def J(self):
+    def __call__(self):
         return self.x
 
     def dJ(self):

@@ -9,99 +9,125 @@ setting up optimizable objects and objective functions.
 
 import numpy as np
 import types
-import abc
 import logging
 import abc
 from mpi4py import MPI
+from deprecated import deprecated
+from collections.abc import Callable
+
+from .dofs import DOF, DOFs
+
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
-class Optimizable(metaclass=abc.ABCMeta):
+class Optimizable(Callable):
     """
-    Abstract base class provides useful features for optimizable functions.
+    Callable ABC that provides useful features for optimizable objects.
 
     The class defines methods that are used by simsopt to know 
     degrees of freedoms (DOFs) associated with the optimizable
-    function. All derived functions have to define get_dofs and
-    set_dofs methods.
+    objects. All derived objects have to implement __call__ and contains
+    _dofs member which is an instance of DOFs class.
     """
-    @abc.abstractmethod
+    @deprecated(version='0.0.2', reason="You should use dofs property")
     def get_dofs(self):
         """
 
         :return:
         """
+        return self.dofs
 
-    @abc.abstractmethod
+    @deprecated(version='0.0.2', reason="You should use dofs property")
     def set_dofs(self, x):
         """
 
-        :param x:
-        :return:
+        Args:
+            x: State vector as a Sequence
         """
+        self.dofs = x
 
     @property
     def dofs(self):
-        if not self._dofs:
-            self._dofs = self.get_dofs()
-        return self._dofs
+        return [dof.x for dof in self._dofs if dof.is_free()]
 
     @dofs.setter
-    def dofs(self, dofs):
-        self._dofs = dofs
+    def dofs(self, x):
+        i = 0
+        for dof in self._dofs:
+            if dof.is_free():
+                dof.x = x[i]
+                i += 1
+        else:
+            if i < len(x):
+                raise IndexError(
+                    "Size of state vector mismatches with free DOFs")
 
-    def index(self, dof_str):
+    @property
+    def state(self):
+        return self.dofs
+
+    def dof_index(self, key):
         """
         Returns the index in the dof array whose name matches dof_str. 
         If not found, ValueError will be raised.
         """
-        dof = self.dofs[dof_str]
-        return self.dofs.index(dof)
+        if isinstance(key, str):
+            dof = self._dofs[key]
+        elif isinstance(key, DOFs):
+            dof = key
+        return self._dofs.index(dof)
 
-    def get_dof(self, dof_str):
+    def get_dof(self, key):
         """
-        Return a degree of freedom specified by its string name.
+        Return a degree of freedom specified by its name or by index.
         """
-        return self.dofs[dof_str]
+        return self._dofs[key].x
 
-    def set_dof(self, dof_str, newval):
+    def set_dof(self, key, new_val):
         """
-        Set a degree of freedom specified by its string name.
+        Set a degree of freedom specified by its name or by index.
         """
-        self.dofs[dof_str] = newval
+        self._dofs[key] = new_val
 
-    def is_dof_fixed(self, dof_str):
+    def is_dof_fixed(self, key):
         """
-        Identifies if the fixed attribute for a given DOF is set
+        Tells if the dof specified with its name or by index is fixed
         """
-        return self.dofs[dof_str].is_fixed()
-        
-    def fix_dof(self, dof_str):
+        return self._dofs[key].is_fixed()
+
+    def is_dof_free(self, key):
+        """
+        Tells if the dof specified with its name or by index is fixed
+        """
+        return self._dofs[key].is_free()
+
+    def fix_dof(self, key):
         """
         Set the fixed attribute for a given degree of freedom, specified by dof_str.
         """
-        self.dofs[dof_str].fix()
+        self._dofs[key].fix()
 
-    def unfix_dof(self, dof_str):
+    def unfix_dof(self, key):
         """
         Set the fixed attribute for a given degree of freedom, specified by dof_str.
         """
-        self.dofs[dof_str].unfix()
+        self._dofs[key].unfix()
 
     def fix_all_dofs(self):
         """
         Set the 'fixed' attribute for all degrees of freedom.
         """
         #self.dof_fixed = np.full(len(self.get_dofs()), True)
-        self.dofs.fix_all()
+        self._dofs.fix_all()
 
     def unfix_all_dofs(self):
         """
         Set the 'fixed' attribute for all degrees of freedom.
         """
         #self.dof_fixed = np.full(len(self.get_dofs()), False)
-        self.dofs.unfix_all()
-        
+        self._dofs.unfix_all()
+
+
 def function_from_user(target):
     """
     Given a user-supplied "target" to be optimized, extract the

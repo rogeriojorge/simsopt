@@ -18,6 +18,7 @@ from mpi4py import MPI
 
 from .optimizable import function_from_user
 from .util import unique
+from .optimizable import optimizable
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
@@ -49,6 +50,7 @@ class DOF(collections.abc.Hashable):
     def __init__(self,
                  owner,
                  name,
+                 x,
                  fixed=False,
                  lower_bound=np.NINF,
                  upper_bound=np.Inf):
@@ -61,6 +63,7 @@ class DOF(collections.abc.Hashable):
         """
         self.owner = owner
         self.name = name
+        self._x = x
         self._fixed = fixed
         self._lb = lower_bound
         self._ub = upper_bound
@@ -128,6 +131,19 @@ class DOF(collections.abc.Hashable):
     def max(self, upper_bound):
         self._ub = upper_bound
 
+    @property
+    def x(self):
+        return self._x
+
+    @x.setter
+    def x(self, x):
+        if self.is_fixed():
+            raise TypeError("Updating state is forbidded for fixed DOF")
+        if x > self.max or x < self.min:
+            raise ValueError(
+                "Input state is out of bounds for the DOF {}".format(self.name))
+        self._x = x
+
 
 class DOFs(collections.abc.MutableSequence):
     """
@@ -139,16 +155,20 @@ class DOFs(collections.abc.MutableSequence):
     def __init__(self,
                  owners,
                  names,
+                 x,
                  fixed=False,
                  lower_bounds=None,
                  upper_bounds=None):
         """
 
-        :param names: Names of the DOFs
-        :param fixed: Array of boolean values denoting if the DOFs is fixed
-        :param lower_bounds: Lower bounds for the DOFs. Meaningful only if
+        Args:
+            owners: Objects owning the dofs
+            names: Names of the dofs
+            x: Values of the dofs
+            fixed: Array of boolean values denoting if the DOFs is fixed
+            lower_bounds: Lower bounds for the DOFs. Meaningful only if
                 DOF is not fixed. Default is np.NINF
-        :param upper_bounds: Upper bounds for the DOFs. Meaningful only if
+            upper_bounds: Upper bounds for the DOFs. Meaningful only if
                 DOF is not fixed. Default is np.inf
         """
         #if fixed and (len(names) != len(fixed)):
@@ -172,9 +192,9 @@ class DOFs(collections.abc.MutableSequence):
                     ub = upper_bounds[i]
                 else:
                     ub = None
-                dof = DOF(owners[i], names[i], lower_bound=lb, upper_bound=ub)
+                dof = DOF(owners[i], names[i], x[i], lower_bound=lb, upper_bound=ub)
             else:
-                dof = DOF(owners[i], names[i], fixed=fixed[i])
+                dof = DOF(owners[i], names[i], x[i], fixed=fixed[i])
             self._dofs.append(dof)
             self._dofs_map[dof.extended_name] = dof
 
@@ -254,10 +274,10 @@ class DOFs(collections.abc.MutableSequence):
         self._dofs.remove(value)
         del self._dofs_map[value.extend_name]
 
-    def __add__(self, other):
-        return self._dofs + other._dofs
+    def __iadd__(self, other):
         for dof in other:
             self._dofs_map[dof.extended_name] = dof
+        self._dofs += other._dofs
 
     def fix_all(self):
         for dof in self._dofs:
@@ -316,7 +336,7 @@ class DOFs(collections.abc.MutableSequence):
         return dofs
 
     @classmethod
-    def dofs_from_function(cls, func):
+    def from_function(cls, func):
         """
         Returns a list of DOFs from a function
 
@@ -326,7 +346,7 @@ class DOFs(collections.abc.MutableSequence):
         attempt is made to identify the DOFs in the function
 
         Args:
-            func: Function expected to be optimized
+            func: Objective function for optimization
 
         Returns:
             List of DOFs (object of DOFs class)
@@ -334,10 +354,10 @@ class DOFs(collections.abc.MutableSequence):
         # Convert user-supplied function-like things to actual functions:
         func = function_from_user(func)
         try:
-            dofs = func.__self__.get_dofs()
+            dofs = func.__self__.dofs
             return dofs
-        except: # We will do further processing
-            pass
+        except: # Decorate with optimizable and do further processing
+            func = optimizable(func)
 
         # First, get a list of the objects and any objects they depend on:
         owners = get_owners(func.__self__)
@@ -345,35 +365,62 @@ class DOFs(collections.abc.MutableSequence):
         # Eliminate duplicates, preserving order:
         owners = unique(owners)
 
+        dof_owners = []
+        #indices = []
+        fixed = []
+        names = []
+
+        # Store the dof_owners and indices for all dofs,
+        # even if they are fixed. It turns out that this is the
+        # information needed to convert the individual function
+        # gradients into the global Jacobian.
+        for owner in owners:
+            ox = owner.get_dofs()
+            ndofs = len(ox)
+            # If 'fixed' is not present, assume all dofs are not fixed
+            if hasattr(owner, 'fixed'):
+                fixed += list(owner.fixed)
+            else:
+                fixed += [False] * ndofs
+
+            for jdof in range(ndofs):
+                dof_owners.append(owner)
+                #indices.append(jdof)
+
+            # Check for names:
+            if hasattr(owner, 'names'):
+                names += [str(owner) + '.' + name for name in owner.names]
+            else:
+                names += ['{}.x[{}]'.format(owner, k) for k in range(ndofs)]
+
+        return DOFs(dof_owners, names, fixed)
+
+
     @classmethod
-    def free_dofs_from_functions(cls, funcs):
+    def from_functions(cls, funcs):
         """
-        Returns a list of variable DOFs from a list of optimizables
+        Returns a list of variable (free) dofs from a list of optimizables
 
         This class method returns the list of free DOFs from a given list
         of optimizable functions. The optimizable functions are expected to
         be methods from sub-classes of Optimizable. If a generic function
         is present (not from Optimizable class), an attempt is made to
-        identify DOFs in the function
+        identify dofs in the function. The dofs are pruned to remove fixed
+        DOFs.
 
-        funcs: A list/set/tuple of callable functions.
+        Args:
+            funcs: A sequence of callable functions.
 
-        returns: an object with the following attributes:
-        x: A 1D numpy vector of variable dofs.
-
-        dof_owners: A vector, with each element pointing to the object whose
-        set_dofs() function should be called to update the corresponding
-        dof.
-
-        all_owners: A list of all objects involved in computing funcs,
-        including those that do not directly own any of the non-fixed
-        dofs.
-
-        indices: A vector of ints, with each element giving the index in
-        the owner's set_dofs method corresponding to this dof.
-
-        names: A list of strings to identify each of the dofs.
+        Returns:
+            DOFs object containing free dofs
         """
+
+        dofs = DOFs.from_function(funcs[0])
+        for func in funcs[1:]:
+            dofs += DOFs.from_function(func)
+
+    @classmethod
+    def from_functions_old(cls, funcs):
 
         # Convert all user-supplied function-like things to actual functions:
         funcs = [function_from_user(f) for f in funcs]
@@ -394,40 +441,40 @@ class DOFs(collections.abc.MutableSequence):
         maxs = []
         names = []
         fixed_merged = []
-        #for owner in all_owners:
-        #    ox = owner.get_dofs()
-        #    ndofs = len(ox)
+        for owner in all_owners:
+            ox = owner.get_dofs()
+            ndofs = len(ox)
             # If 'fixed' is not present, assume all dofs are not fixed
-            #if hasattr(owner, 'fixed'):
-            #    fixed = list(owner.fixed)
-            #else:
-            #    fixed = [False] * ndofs
-            #fixed_merged += fixed
+            if hasattr(owner, 'fixed'):
+                fixed = list(owner.fixed)
+            else:
+                fixed = [False] * ndofs
+            fixed_merged += fixed
 
             # Check for bound constraints:
-            #if hasattr(owner, 'mins'):
-            #    omins = owner.mins
-            #else:
-            #    omins = np.full(ndofs, np.NINF)
-            #if hasattr(owner, 'maxs'):
-            #    omaxs = owner.maxs
-            #else:
-            #    omaxs = np.full(ndofs, np.Inf)
+            if hasattr(owner, 'mins'):
+                omins = owner.mins
+            else:
+                omins = np.full(ndofs, np.NINF)
+            if hasattr(owner, 'maxs'):
+                omaxs = owner.maxs
+            else:
+                omaxs = np.full(ndofs, np.Inf)
 
             # Check for names:
-            #if hasattr(owner, 'names'):
-            #    onames = [name + ' of ' + str(owner) for name in owner.names]
-            #else:
-            #    onames = ['x[{}] of {}'.format(k, owner) for k in range(ndofs)]
+            if hasattr(owner, 'names'):
+                onames = [name + ' of ' + str(owner) for name in owner.names]
+            else:
+                onames = ['x[{}] of {}'.format(k, owner) for k in range(ndofs)]
 
-            #for jdof in range(ndofs):
-            #    if not fixed[jdof]:
-            #        x.append(ox[jdof])
-            #        dof_owners.append(owner)
-            #        indices.append(jdof)
-            #        names.append(onames[jdof])
-            #        mins.append(omins[jdof])
-            #        maxs.append(omaxs[jdof])
+            for jdof in range(ndofs):
+                if not fixed[jdof]:
+                    x.append(ox[jdof])
+                    dof_owners.append(owner)
+                    indices.append(jdof)
+                    names.append(onames[jdof])
+                    mins.append(omins[jdof])
+                    maxs.append(omaxs[jdof])
 
         # Now repeat the process we just went through, but for only a
         # single element of funcs. The results will be needed to
@@ -441,30 +488,30 @@ class DOFs(collections.abc.MutableSequence):
         # even if they are fixed. It turns out that this is the
         # information needed to convert the individual function
         # gradients into the global Jacobian.
-        #for func in funcs:
-        #    owners = get_owners(func.__self__)
-        #    f_dof_owners = []
-        #    f_indices = []
-        #    f_fixed = []
-        #    for owner in owners:
-        #        ox = owner.get_dofs()
-        #        ndofs = len(ox)
-        #        # If 'fixed' is not present, assume all dofs are not fixed
-        #        if hasattr(owner, 'fixed'):
-        #            fixed = list(owner.fixed)
-        #        else:
-        #            fixed = [False] * ndofs
-        #        f_fixed += fixed
+        for func in funcs:
+            owners = get_owners(func.__self__)
+            f_dof_owners = []
+            f_indices = []
+            f_fixed = []
+            for owner in owners:
+                ox = owner.get_dofs()
+                ndofs = len(ox)
+                # If 'fixed' is not present, assume all dofs are not fixed
+                if hasattr(owner, 'fixed'):
+                    fixed = list(owner.fixed)
+                else:
+                    fixed = [False] * ndofs
+                f_fixed += fixed
 
-        #        for jdof in range(ndofs):
-        #            f_dof_owners.append(owner)
-        #            f_indices.append(jdof)
-        #            # if not fixed[jdof]:
-        #            #    f_dof_owners.append(owner)
-        #            #    f_indices.append(jdof)
-        #    func_dof_owners.append(f_dof_owners)
-        #    func_indices.append(f_indices)
-        #    func_fixed.append(f_fixed)
+                for jdof in range(ndofs):
+                    f_dof_owners.append(owner)
+                    f_indices.append(jdof)
+                    # if not fixed[jdof]:
+                    #    f_dof_owners.append(owner)
+                    #    f_indices.append(jdof)
+            func_dof_owners.append(f_dof_owners)
+            func_indices.append(f_indices)
+            func_fixed.append(f_fixed)
 
         # Check whether derivative information is available:
         grad_avail = True
