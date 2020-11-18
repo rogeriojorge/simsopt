@@ -1,99 +1,130 @@
 import unittest
 import numpy as np
-from simsopt.core.dofs import get_owners, DOFs
+from collections import Counter
+
+from simsopt.core.dofs import get_owners, DOF, DOFs
 from simsopt.core.functions import Identity, Adder, TestObject2, Rosenbrock, Affine
 from simsopt.core.optimizable import Target
 
 class GetOwnersTests(unittest.TestCase):
+    def setUp(self):
+        self.obj = object()
+        self.i1 = Identity()
+        self.i2 = Identity()
+        self.i3 = Identity()
+        self.comp = lambda list1, list2: Counter(list1) == Counter(list2)
+
+    def tearDown(self) -> None:
+        self.obj = None
+        self.i1 = None
+        self.i2 = None
+        self.i3 = None
+
     def test_no_dependents(self):
         """
         For an object that does not depend on anything, just return the
         original object.
         """
-        obj = object()
-        self.assertEqual(get_owners(obj), [obj])
-
-        iden = Identity()
-        self.assertEqual(get_owners(iden), [iden])
+        self.assertEqual(get_owners(self.obj), [self.obj])
+        self.assertEqual(get_owners(self.i1), [self.i1])
 
     def test_depth_1(self):
         """
         Check cases in which the original object depends on 1 or more others.
         """
-        o1 = Identity()
-        o2 = Identity()
-        o1.o2 = o2
-        o1.depends_on = ["o2"]
-        self.assertEqual(get_owners(o1), [o1, o2])
+        self.i1.i2 = self.i2
+        self.i1.depends_on = ["i2"]
+        self.assertTrue(self.comp(get_owners(self.i1), [self.i1, self.i2]))
 
-        o3 = object()
-        o1.depends_on = ["o3", "o2"]
-        o1.o3 = o3
-        self.assertEqual(get_owners(o1), [o1, o3, o2])
+        self.i1.depends_on = ["obj", "i2"]
+        self.i1.obj = self.obj
+        self.assertTrue(self.comp(get_owners(self.i1),
+                                  [self.i1, self.obj, self.i2]))
         
     def test_depth_2(self):
         """
         Check cases in which the original object depends on another, which
         depends on another.
         """
-        o1 = Identity()
-        o2 = Identity()
-        o3 = object()
-        o1.depends_on = ["o2"]
-        o2.depends_on = ["o3"]
-        o1.o2 = o2
-        o2.o3 = o3
-        self.assertEqual(get_owners(o1), [o1, o2, o3])
+        self.i1.depends_on = ["i2"]
+        self.i2.depends_on = ["obj"]
+        self.i1.i2 = self.i2
+        self.i2.obj = self.obj
+        self.assertTrue(get_owners(self.i1), [self.i1, self.i2, self.obj])
 
     def test_circular2(self):
         """
         Verify that a circular dependency among 2 objects is detected.
         """
-        o1 = Identity()
-        o2 = Identity()
-        o1.depends_on = ["o2"]
-        o2.depends_on = ["o1"]
-        o1.o2 = o2
-        o2.o1 = o1
+        self.i1.depends_on = ["i2"]
+        self.i2.depends_on = ["i1"]
+        self.i1.i2 = self.i2
+        self.i2.i1 = self.i1
         with self.assertRaises(RuntimeError):
-            get_owners(o1)
+            get_owners(self.i1)
 
     def test_circular3(self):
         """
         Verify that a circular dependency among 3 objects is detected.
         """
-        o1 = Identity()
-        o2 = Identity()
-        o3 = Identity()
-        o1.depends_on = ["o2"]
-        o2.depends_on = ["o3"]
-        o3.depends_on = ["o1"]
-        o1.o2 = o2
-        o2.o3 = o3
-        o3.o1 = o1
+        self.i1.depends_on = ["i2"]
+        self.i2.depends_on = ["i3"]
+        self.i3.depends_on = ["i1"]
+        self.i1.i2 = self.i2
+        self.i2.i3 = self.i3
+        self.i3.i1 = self.i1
         with self.assertRaises(RuntimeError):
-            get_owners(o1)
+            get_owners(self.i1)
 
-    def test_circular4(self):
-        """
-        Verify that a circular dependency among 4 objects is detected.
-        """
-        o1 = Identity()
-        o2 = Identity()
-        o3 = Identity()
-        o4 = Identity()
-        o1.depends_on = ["o2"]
-        o2.depends_on = ["o3"]
-        o3.depends_on = ["o4"]
-        o4.depends_on = ["o1"]
-        o1.o2 = o2
-        o2.o3 = o3
-        o3.o4 = o4
-        o4.o1 = o1
-        with self.assertRaises(RuntimeError):
-            get_owners(o1)
+class DOFTest(unittest.TestCase):
+    """
+    Unit tests for simsopt.core.DOF class
+    """
+    def setUp(self):
+        self.func1 = lambda x, y: (x - 1) * (x - 1) + 0.1 * (x*x -y)
+        self.func2 = Rosenbrock().f
+        pass
+
+    def tearDown(self) -> None:
+        self.func1 = None
+        self.func2 = None
+
+    def test_hash(self):
+        self.assertFalse(True)
+
+    def test_extended_name(self):
+        self.assertFalse(True)
+
+    def test_is_fixed(self):
+        self.assertTrue(False)
+
+    def test_is_free(self):
+        self.assertTrue(False)
+
+    def test_fix(self):
+        self.assertTrue(False)
+
+    def test_unfix(self):
+        self.assertTrue(False)
+
+    def test_min(self):
+        self.assertTrue(False)
+
+    def test_max(self):
+        self.assertTrue(False)
+
+    def test_owner(self):
+        self.assertTrue(False)
+
 
 class DOFsTests(unittest.TestCase):
+
+    def setUp(self):
+        pass
+
+    def tearDown(self) -> None:
+        pass
+
     def test_no_dependents(self):
         """
         Tests for an object that does not depend on other objects.
