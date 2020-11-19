@@ -2,11 +2,10 @@
 # Copyright (c) HiddenSymmetries Development Team.
 # Distributed under the terms of the LGPL License
 
-from .util import *
+#from .util import *
 from .optimizable import Optimizable, Target, optimizable
-from .surface import *
-from .functions import *
-#from .dofs import DOFs
+#from .surface import *
+#from .functions import *
 from .least_squares_problem import LeastSquaresTerm, LeastSquaresProblem
 from .serial_solve import least_squares_serial_solve
 from .mpi import MpiPartition
