@@ -128,20 +128,6 @@ class Optimizable(Callable):
         self._dofs.unfix_all()
 
 
-def function_from_user(target):
-    """
-    Given a user-supplied "target" to be optimized, extract the
-    associated callable function.
-    """
-    if callable(target):
-        return target
-    # The method J is to conform with sismgeo
-    elif hasattr(target, 'J') and callable(target.J):
-        return target.J
-    else:
-        raise TypeError('Unable to find a callable function associated '
-                        'with the user-supplied target ' + str(target))
-
 class Target(Optimizable):
     """
     Given an attribute of an object, which typically would be a
@@ -158,6 +144,8 @@ class Target(Optimizable):
             return getattr(self0.obj, 'd' + self0.attr)
         if hasattr(obj, 'd' + attr):
             self.dJ = types.MethodType(dJ, self)
+
+        self.__call__ = lambda x: obj.attr
         
     def J(self):
         return getattr(self.obj, self.attr)
@@ -170,6 +158,7 @@ class Target(Optimizable):
 
     def set_dofs(self, v):
         pass
+
 
 def optimizable(obj):
     """
