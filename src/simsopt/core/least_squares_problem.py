@@ -13,7 +13,7 @@ import warnings
 
 from scipy.optimize import least_squares
 from mpi4py import MPI
-from .dofs import DOFs
+from .optimizable import DOFs
 from .util import isnumber
 from .optimizable import function_from_user, Target
 

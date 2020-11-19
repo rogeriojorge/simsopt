@@ -3,8 +3,10 @@
 import logging
 import sys
 sys.path.append('..')
-from simsopt import *
+from simsopt import LeastSquaresTerm, LeastSquaresProblem
+from simsopt.core.functions import Identity
 from simsopt.core.serial_solve import least_squares_serial_solve
+
 
 """                                                                           
 Minimize f(x,y,z) = ((x-1)/1)^2 + ((y-2)/2)^2 + ((z-3)/3)^2.                  

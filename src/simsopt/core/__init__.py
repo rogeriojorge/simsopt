@@ -4,7 +4,7 @@
 
 #from .util import *
 from .optimizable import Optimizable, Target, optimizable
-#from .surface import *
+from .surface import SurfaceRZFourier, SurfaceGarabedian
 #from .functions import *
 from .least_squares_problem import LeastSquaresTerm, LeastSquaresProblem
 from .serial_solve import least_squares_serial_solve
