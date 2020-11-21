@@ -7,22 +7,29 @@ This module provides classes and functions that are useful for
 setting up optimizable objects and objective functions.
 """
 
-import logging
-import collections
-import copy
 import abc
+import copy
+import logging
 import types
-import numpy as np
+from collections.abc import Callable, Hashable, Sequence, MutableSequence
+from numbers import Real, Integral
+from typing import Union, Any
 
+import numpy as np
 from mpi4py import MPI
-from deprecated import deprecated
-from collections.abc import Callable, Hashable, MutableSequence
+#from monty.json import MSONable
 
 from .util import unique
 
-
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
+# Types
+Array = Union[MutableSequence, np.array]
+RealArray = Union[MutableSequence[Real], np.array[Real]]
+IntArray = Union[MutableSequence[Integral], np.array[Integral]]
+StrArray = Union[MutableSequence[str], np.array[str]]
+BoolArray = Union[MutableSequence[Integral], np.array[Integral]]
+Key = Union[Integral, str]  # To denote arguments for accessing individual dof
 
 def get_owners(obj, owners_so_far=[]):
     """
@@ -64,12 +71,12 @@ class DOF(Hashable):
     """
 
     def __init__(self,
-                 owner,
-                 name,
-                 x,
-                 fixed=False,
-                 lower_bound=np.NINF,
-                 upper_bound=np.Inf):
+                 owner: Any,
+                 name: str,
+                 x: Real,
+                 free: bool = True,
+                 lower_bound: Real = np.NINF,
+                 upper_bound: Real = np.Inf):
         """
 
         :param name: Name of DOF for easy reference
@@ -80,7 +87,7 @@ class DOF(Hashable):
         self.owner = owner
         self.name = name
         self._x = x
-        self._fixed = fixed
+        self._free = free
         self._lb = lower_bound
         self._ub = upper_bound
 
@@ -88,63 +95,67 @@ class DOF(Hashable):
         return hash(":".join(map(str, [self.owner, self.name])))
 
     @property
-    def extended_name(self):
+    def extended_name(self) -> str:
         return ":".join(map(str, [self.owner, self.name]))
 
-    def is_fixed(self):
+    def __repr__(self) -> str:
+        return "DOF: {}, value = {}, fixed = {}, bounds = ({}, {})".fomat(
+            self.name, self._x, self._fixed, self._lb, self._ub)
+
+    def is_fixed(self) -> bool:
         """
         Checks ifs the DOF is fixed
 
         Returns:
             True if DOF is fixed else False
         """
-        return self._fixed
+        return not self._free
 
-    def is_free(self):
+    def is_free(self) -> bool:
         """
         Checks ifs the DOF is fixed
 
         Returns:
             True if DOF is fixed else False
         """
-        return not self._fixed
+        return self._free
 
-    def fix(self):
+    def fix(self) -> None:
         """
         Denotes that the DOF needs to be fixed during optimization
         """
-        self._fixed = True
+        self._free = False
 
     def unfix(self):
         """
         Denotes that the DOF can be varied during optimization
         """
-        self._fixed = False
+        self._free = True
 
     @property
-    def min(self):
+    def min(self) -> Real:
         """
         Minimum value of DOF allowed
 
         :return: Lower bound of DOF if not fixed else None
         """
-        return None if self._fixed else self._lb
+        return self._lb if self._free else None
 
     @min.setter
     def min(self, lower_bound):
         self._lb = lower_bound
 
     @property
-    def max(self):
+    def max(self) -> Real:
         """
         Maximum value of DOF allowed
 
         :return: Upper bound of DOF if not fixed else None
         """
-        return None if self._fixed else self._ub
+        return self._ub if self._free else None
 
     @max.setter
-    def max(self, upper_bound):
+    def max(self, upper_bound: Real) -> None:
         self._ub = upper_bound
 
     @property
@@ -169,12 +180,12 @@ class DOFs(MutableSequence):
     that have been combined from multiple optimizable objects.
     """
     def __init__(self,
-                 owners,
-                 names,
-                 x,
-                 fixed=False,
-                 lower_bounds=None,
-                 upper_bounds=None):
+                 owners: Sequence[Any],
+                 x: RealArray,
+                 names: StrArray = None,
+                 free: BoolArray = None,
+                 lower_bounds: RealArray = None,
+                 upper_bounds: RealArray = None):
         """
 
         Args:
@@ -187,121 +198,239 @@ class DOFs(MutableSequence):
             upper_bounds: Upper bounds for the DOFs. Meaningful only if
                 DOF is not fixed. Default is np.inf
         """
-        #if fixed and (len(names) != len(fixed)):
-        #    raise IndexError("The length of `fixed' should be equal to "
-        #                     "the length of 'names'.")
-        #if lower_bounds and (len(names) != len(lower_bounds)):
-        #    raise IndexError("The length of `lower_bounds' should be equal to "
-        #                     "the length of 'names'.")
-        #if upper_bounds and (len(names) != len(upper_bounds)):
-        #    raise IndexError("The length of `upper_bounds' should be equal to "
-        #                     "the length of 'names'.")
-        self._dofs = []
-        self._dofs_map = {}
-        for i, name in enumerate(names):
-            if (fixed and not fixed[i]) or not fixed:  # Fixed sequence is defined
-                if lower_bounds:
-                    lb = lower_bounds[i]
-                else:
-                    lb = None
-                if upper_bounds:
-                    ub = upper_bounds[i]
-                else:
-                    ub = None
-                dof = DOF(owners[i], names[i], x[i], lower_bound=lb, upper_bound=ub)
-            else:
-                dof = DOF(owners[i], names[i], x[i], fixed=fixed[i])
-            self._dofs.append(dof)
-            self._dofs_map[dof.extended_name] = dof
+        self.owners = np.array(owners)
+        self._x = np.array(x)
+        if names:
+            self.names = np.array(names)
+        else:
+            self.names = np.array(map(lambda i: "x[{}]".format(i),
+                                      range(len(self.x))))
 
-    def __getitem__(self, key):
-        if isinstance(key, int):
-            return self._dofs[key]
+        if free:
+            self.free = np.array(free)
+        else:
+            self.free = np.full(len(self.x), True)
+
+        if lower_bounds:
+            self._lb = np.array(lower_bounds)
+        else:
+            self._lb = np.full(len(self.x), np.NINF)
+
+        if upper_bounds:
+            self._ub = np.array(upper_bounds)
+        else:
+            self._ub = np.full(len(self.x), np.inf)
+
+    def __getitem__(self, key: Union[Integral, str]):
+        if isinstance(key, Integral):
+            i = key
         elif isinstance(key, str): # Implement string indexing
-            return self._dofs_map[key]
+            i = self.names.index(key)
+        else:
+            raise TypeError("Wrong type as index. Supply either an integer"
+                            " or string for index.")
+        return DOF(self.owners[i], self.names[i], self._x[i], self.free[i],
+                   self._lb[i], self._ub[i])
+
+    def __setitem__(self,
+                    key: Union[Integral, str],
+                    val: Union[DOF, Real]):
+        if isinstance(key, Integral):
+            i = key
+        elif isinstance(key, str):  # Implement string indexing
+            i = self.names.index(key)
         else:
             raise TypeError("Wrong type as index. Supply either an integer"
                             " or string for index.")
 
-    def __setitem__(self, key, value):
-        if isinstance(key, int):
-            prev_dof = self._dofs[key]
-            self._dofs[key] = value
-            self._dofs_map[prev_dof.extended_name] = value
+        if isinstance(val, DOF):
+            self.owners[i] = val.owner
+            self._x[i] = val.x
+            self.names[i] = val.name
+            self.free[i] = val.is_free()
+            self._lb[i] = val.min
+            self._ub[i] = val.max
+        else:
+            self._x[i] = float(val)
+
+    def __delitem__(self, key: Union[Integral, str]):
+        """
+        Delete a DOF
+        Caution: Use this sparingly
+        TODO:  Should we return a new DOFs object instead of deleting inplace?
+
+        Args:
+            key (string or Integer): Index
+
+        Returns:
+            None
+        """
+        if isinstance(key, Integral):
+            i = key
         elif isinstance(key, str):
-            try:
-                prev_dof = self._dofs_map[key]
-                self._dofs_map[key] = value
-                i = self._dofs.index(prev_dof)
-                self._dofs[i] = value
-            except:
-                self._dofs_map[key] = value
-                self._dofs.append(value)
+            i = self.names.index(key)
         else:
             raise TypeError("Wrong type as index. Supply either an integer"
                             " or string for index.")
 
-    def __delitem__(self, key):
-        if isinstance(key, int):
-            dof = self._dofs[key]
-            del self._dofs[key]
-            del self._dofs_map[dof.extended_name]
-        elif isinstance(key, str):
-            dof = self._dofs_map[key]
-            del self._dofs_map[key]
-            del self._dofs[self._dofs.index(dof)]
-        else:
-            raise TypeError("Wrong type as index. Supply either an integer"
-                            " or string for index.")
+        self.owners = np.delete(self.owners, i)
+        self._x = np.delete(self._x, i)
+        self.names = np.delete(self.names, i)
+        self.free = np.delete(self.free, i)
+        self._lb = np.delete(self._lb, i)
+        self._ub = np.delete(self._ub, i)
 
     def __len__(self):
-        return len(self._dofs)
+        # TODO: Question - Shall we use self.x or self._x here?
+        return len(self._x)
 
-    def __contains__(self, item):
-        return item in self._dofs
+    def __contains__(self, item: Union[DOF, Real, str]):
+        """
+        Overloaded __contains__ method
+
+        Args:
+            item:
+
+        Returns:
+
+        """
+        if isinstance(item, Real):
+            return item in self._x
+        elif isinstance(str):
+            return item in self.names
+        elif isinstance(item, DOF):
+            if item.x in self.x:
+                i = self._x.index(item.x)
+                return all([item.owner == self.owners[i],
+                            item.name == self.names[i],
+                            item.is_free() == self.free[i],
+                            item.min == self._lb[i],
+                            item.max == self._ub[i]])
+            else:
+                return False
+        else:
+            raise TypeError(
+                "Wrong type. Only str, DOF, or Real types accepted.")
+
 
     def __iter__(self):
-        return self._dofs.__iter__()
+        self.i = 0
+        return self
+
+    def __next__(self):
+        # TODO: Question - Shall we use self.x or self._x here?
+        i = self.i
+        self.i += 1
+        if i < len(self._x):
+            return DOF(self.owners[i], self.names[i], self._x[i], self.free[i],
+                       self._lb[i], self._ub[i])
+        else:
+            raise StopIteration
 
     def __reversed__(self):
+        for i in reversed(range(len(self._x))):
+            yield DOF(self.owners[i], self.names[i], self._x[i], self.free[i],
+                      self._lb[i], self._ub[i])
+
+    # TODO
+    def insert(self,
+               key: Union[str, Integral],
+               val: Union[Real, DOF]) -> None:
+        """
+        Insert a new value into DOFs.
+
+        Caution: This method is provided for consistency with
+        MutableSequence. Use this sparingly or not at all
+        Args:
+            key: str or Integer
+            val: New value to be inserted
+        """
+        if isinstance(key, str):
+            if key in self.names: # Name matches, just replace
+                i = self.names.index((key))
+                if isinstance(val, Real):
+                    self._x[i] = val
+                else:
+                    self.owners[i] == val.owner
+                    self._x[i] == val.x
+                    self.free[i] == val.is_free()
+                    self._lb[i] == val.min
+                    self._ub[i] == val.max
+            else: # Append the new item
+                self.append(val)
+
+        else:
+            if isinstance(val, Real):
+                raise TypeError(
+                    "With integer index, full DOF needs to be supplied")
+            else:
+                if val.name is None:
+                    raise ValueError(
+                        "Can't assign name automatically under insertion "
+                        "operation.")
+                self.owners = self.owners.append(val.owner)
+                self.names = self.names.append(val.name)
+                self._x = self._x.append(val.x)
+                self.free = self.free.append(val.is_free())
+                self._lb = self._lb.append(val.min)
+                self._ub = self._ub.append(val.max)
+
+    def append(self, val: Union[Real, DOF]) -> None:
+        if isinstance(val, Real):
+            self._x = self._x.append(val)
+            self.names = "x[{}]".format(len(self._x) - 1)
+            self.owners = self.owners.append(self.owners[-1])
+            self.free = self.free.append(True)
+            self._lb = self._lb.append(np.NINF)
+            self._ub = self._ub.append(np.inf)
+        else:
+            self.owners = self.owners.append(val.owner)
+            self.names = self.names.append(
+                "x[{}]".format(len(self._x)) if not val.name else val.name)
+            self._x = self._x.append(val.x)
+            self.free = self.free.append(val.is_free())
+            self._lb = self._lb.append(val.min)
+            self._ub = self._ub.append(val.max)
+
+    # TODO
+    def reverse(self) -> None:
+        """
+        Reverses the DOF sequence
+        """
+        self.owners = np.flip(self.owners)
+        self.names = np.flip(self.names)
+        self._x = np.flip(self._x)
+        self.free = np.flip(self.free)
+        self._ub = np.flip(self._ub)
+        self._lb = np.flip(self._lb)
+
+    # TODO
+    def extend(self, other_dofs):
         pass
 
-    def insert(self, index, value):
-        self._dofs.insert(index, value)
-        self._dofs_map[value.extend_name] = value
-
-    def reverse(self):
-        self._dofs.reverse()
-
-    def extend(self, other_dofs):
-        self._dofs.extend(other_dofs._dofs)
-        for dof in other_dofs:
-            self._dofs_map[dof.extended_name] = dof
-
+    # TODO
     def pop(self, index=None):
-        if index is None:
-            dof = self._dofs.pop()
-        else:
-            dof = self._dofs.pop(index)
-        del self._dofs_map[dof.extended_name]
-        return dof
+        pass
 
+    # TODO
     def remove(self, value):
-        self._dofs.remove(value)
-        del self._dofs_map[value.extend_name]
+        pass
 
+    # TODO
     def __iadd__(self, other):
-        for dof in other:
-            self._dofs_map[dof.extended_name] = dof
-        self._dofs += other._dofs
+        pass
 
     def fix_all(self):
-        for dof in self._dofs:
-            dof.fix()
+        self.free = np.full(len(self._x), False)
 
     def unfix_all(self):
-        for dof in self._dofs:
-            dof.unfix()
+        """
+        Make vall DOFs variable
+        Caution: Make sure the bounds are well defined
+        Returns:
+
+        """
+        self.free = np.full(len(self._x), True)
 
     def any_free(self):
         """
@@ -310,7 +439,7 @@ class DOFs(MutableSequence):
         Returns:
             True if any free DOF is found
         """
-        return any(dof.is_free() for dof in self._dofs)
+        return np.any(self.free)
 
     def any_fixed(self):
         """
@@ -319,7 +448,7 @@ class DOFs(MutableSequence):
         Returns:
             True if any fixed DOF is found
         """
-        return any(dof.is_fixed() for dof in self._dofs)
+        return not np.all(self.free)
 
     def all_free(self):
         """
@@ -328,7 +457,7 @@ class DOFs(MutableSequence):
         Returns:
             True if all DOFs are free to vary
         """
-        return all(dof.is_fixed() for dof in self._dofs)
+        return np.all(self.free)
 
     def all_fixed(self):
         """
@@ -337,20 +466,33 @@ class DOFs(MutableSequence):
         Returns:
             True if all DOFs are fixed
         """
-        return all(dof.is_fixed() for dof in self._dofs)
+        return not np.any(self.free)
 
-    def without_fixed(self):
+    @property
+    def x(self) -> RealArray:
+        return self._x[self.free]
+
+    @x.setter
+    def x(self, x: RealArray) -> None:
         """
-        Prune fixed DOFs from the DOFs object and return the free DOFs
+
+        Args:
+            x: Array of values to set x
+            Note: This method blindly broadcasts a single value.
+            So don't supply a single value unless you really desire
+        """
+        self._x[self.free] = x
+
+    def full_x(self) -> RealArray:
+        """
+        Return all x even the fixed ones
 
         Returns:
             Pruned DOFs object without any fixed DOFs
         """
-        dofs = copy.copy(self)
-        for i, dof in enumerate(dofs):
-            dofs.remove(dof)
-        return dofs
+        return self._x
 
+    # TODO: Move this method else where.
     @classmethod
     def from_function(cls, func):
         """
@@ -412,6 +554,7 @@ class DOFs(MutableSequence):
         return DOFs(dof_owners, names, fixed)
 
 
+    # TODO: Move this method else where.
     @classmethod
     def from_functions(cls, funcs):
         """
@@ -565,41 +708,7 @@ class DOFs(MutableSequence):
 
         return dofs
 
-    @property
-    def x(self):
-        """
-        Call get_dofs() for each object, to assemble an up-to-date version
-        of the state vector.
-        """
-        x = np.zeros(self.nparams)
-        for owner in self.dof_owners:
-            # In the next line, we make sure to cast the type to a
-            # float. Otherwise get_dofs might return an array with
-            # integer type.
-            objx = np.array(owner.get_dofs(), dtype=np.dtype(float))
-            for j in range(self.nparams):
-                if self.dof_owners[j] == owner:
-                    x[j] = objx[self.indices[j]]
-        return x
-
-    @x.setter
-    def x(self, x):
-        """
-        Call set_dofs() for each object, given a global state vector x.
-        """
-        # Idea behind the following loops: call set_dofs exactly once
-        # once for each object, in case that improves performance at
-        # all for the optimizable objects.
-        for owner in self.all_owners:
-            # In the next line, we make sure to cast the type to a
-            # float. Otherwise get_dofs might return an array with
-            # integer type.
-            objx = np.array(owner.get_dofs(), dtype=np.dtype(float))
-            for j in range(self.nparams):
-                if self.dof_owners[j] == owner:
-                    objx[self.indices[j]] = x[j]
-            owner.set_dofs(objx)
-
+    # TODO: Move this method else where.
     def f(self, x=None):
         """
         Return the vector of function values. Result is a 1D numpy array.
@@ -630,6 +739,7 @@ class DOFs(MutableSequence):
         self.nvals = np.sum(self.nvals_per_func)
         return np.concatenate(val_list)
 
+    # TODO: Move this method else where.
     def jac(self, x=None):
         """
         Return the Jacobian, i.e. the gradients of all the functions that
@@ -714,6 +824,7 @@ class DOFs(MutableSequence):
         # print(fd_jac - results)
         return results
 
+    # TODO: Move this method else where.
     def fd_jac(self, x=None, eps=1e-7, centered=False):
         """
         Compute the finite-difference Jacobian of the functions with
@@ -790,39 +901,51 @@ class DOFs(MutableSequence):
         return jac
 
 
-
-class Optimizable(Callable):
+class Optimizable(Callable, abc.ABC):
     """
     Callable ABC that provides useful features for optimizable objects.
 
     The class defines methods that are used by simsopt to know 
     degrees of freedoms (DOFs) associated with the optimizable
     objects. All derived objects have to implement __call__ and contains
-    _dofs member which is an instance of DOFs class.
+    set_dofs and get_dofs methods which is an instance of DOFs class.
     """
-    @deprecated(version='0.0.2', reason="You should use dofs property")
-    def get_dofs(self):
+    # Bharat's comment: I think we should deprecate set_dofs and get_dofs
+    # in favor of 'dof' or 'state' or 'x' property name? I think if we go
+    # this route, having a function to collect dofs for any arbitrary function
+    # or class is needed. For functions, it is straight-forward, all the
+    # arguments to the function are DOFs unless indicated somehow. If the
+    # arguments are Sequences or numpy array, each individual element is a
+    # DOF. The bounds # can be supplied similar to scipy.least_squares. Same
+    # is the case with objects of a class.
+    #
+    # For subclasses of Optimizable, instead of making set_dofs and
+    # get_dofs as abstract method we will define a new abstract method called
+    # collect_dofs to collect dofs into a DOFs object.
+    #@deprecated(version='0.0.2', reason="You should use dofs property")
+    @abc.abstractmethod
+    def get_dofs(self) -> Array:
         """
 
-        :return:
         """
-        return self.dofs
+        #return self.dofs
 
-    @deprecated(version='0.0.2', reason="You should use dofs property")
-    def set_dofs(self, x):
+    #@deprecated(version='0.0.2', reason="You should use dofs property")
+    @abc.abstractmethod
+    def set_dofs(self, x: Array) -> None:
         """
 
         Args:
             x: State vector as a Sequence
         """
-        self.dofs = x
+        #self.dofs = x
 
     @property
-    def dofs(self):
+    def dofs(self) -> Array:
         return [dof.x for dof in self._dofs if dof.is_free()]
 
     @dofs.setter
-    def dofs(self, x):
+    def dofs(self, x: Array) -> None:
         i = 0
         for dof in self._dofs:
             if dof.is_free():
@@ -834,10 +957,10 @@ class Optimizable(Callable):
                     "Size of state vector mismatches with free DOFs")
 
     @property
-    def state(self):
+    def state(self) -> Array:
         return self.dofs
 
-    def dof_index(self, key):
+    def dof_index(self, key: Key) -> Integral:
         """
         Returns the index in the dof array whose name matches dof_str. 
         If not found, ValueError will be raised.
@@ -848,50 +971,50 @@ class Optimizable(Callable):
             dof = key
         return self._dofs.index(dof)
 
-    def get_dof(self, key):
+    def get_dof(self, key: Key) -> Real:
         """
         Return a degree of freedom specified by its name or by index.
         """
         return self._dofs[key].x
 
-    def set_dof(self, key, new_val):
+    def set_dof(self, key: Key, new_val: Real) -> None:
         """
         Set a degree of freedom specified by its name or by index.
         """
         self._dofs[key] = new_val
 
-    def is_dof_fixed(self, key):
+    def is_dof_fixed(self, key: Key) -> bool:
         """
         Tells if the dof specified with its name or by index is fixed
         """
         return self._dofs[key].is_fixed()
 
-    def is_dof_free(self, key):
+    def is_dof_free(self, key: Key) -> bool:
         """
         Tells if the dof specified with its name or by index is fixed
         """
         return self._dofs[key].is_free()
 
-    def fix_dof(self, key):
+    def fix_dof(self, key: Key) -> None:
         """
         Set the fixed attribute for a given degree of freedom, specified by dof_str.
         """
         self._dofs[key].fix()
 
-    def unfix_dof(self, key):
+    def unfix_dof(self, key: Key) -> None:
         """
         Set the fixed attribute for a given degree of freedom, specified by dof_str.
         """
         self._dofs[key].unfix()
 
-    def fix_all_dofs(self):
+    def fix_all_dofs(self) -> None:
         """
         Set the 'fixed' attribute for all degrees of freedom.
         """
         #self.dof_fixed = np.full(len(self.get_dofs()), True)
         self._dofs.fix_all()
 
-    def unfix_all_dofs(self):
+    def unfix_all_dofs(self) -> None:
         """
         Set the 'fixed' attribute for all degrees of freedom.
         """
@@ -916,14 +1039,20 @@ class Target(Optimizable):
         if hasattr(obj, 'd' + attr):
             self.dJ = types.MethodType(dJ, self)
 
-        self.__call__ = lambda x: obj.attr
-        
+    def __call__(self, *args, **kwargs):
+        f = getattr(self.obj, self.attr)
+        if callable(f):
+            return f(*args, **kwargs)
+        else:
+            return f
+
     def J(self):
         return getattr(self.obj, self.attr)
 
     #def dJ(self):
     #    return getattr(self.obj, 'd' + self.attr)
 
+    # Bharat's comment: The following two needs to be better defined
     def get_dofs(self):
         return np.array([])
 
