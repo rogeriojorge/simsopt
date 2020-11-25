@@ -11,17 +11,22 @@ import numpy as np
 import logging
 import warnings
 
+from collections.abc import Sequence
+from typing import Union
+from numbers import Real
 from scipy.optimize import least_squares
 from mpi4py import MPI
 from .optimizable import DOFs
 from .util import isnumber
-from .optimizable import function_from_user, Target
+from .optimizable import function_from_user, Optimizable, Target
 
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
+RealArray = Union[Sequence[Real], ]
 
-class LeastSquaresTerm:
+
+class LeastSquaresTerm(Optimizable):
     """
     This class represents one term in a nonlinear-least-squares
     problem. A LeastSquaresTerm instance has 3 basic attributes: a
@@ -31,36 +36,62 @@ class LeastSquaresTerm:
     f_out = weight * (f_in - goal) ** 2.
     """
 
-    def __init__(self, f_in, goal, weight): #=None, sigma=None):
-        self.f_in = function_from_user(f_in)
-        self.goal = goal
-        if not isnumber(weight): # Bharat's comment: Do we need this check?
-            raise TypeError('Weight must be a float or int')
-        if weight < 0:
+    def __init__(self,
+                 funcs_in: Sequence[Optimizable],
+                 goal: Union[Sequence, np.ndarray[Real]],
+                 weights: Union[Sequence, np.ndarray]):
+        """
+
+        Args:
+            funcs_in:
+            goals:
+            weights:
+        """
+        self.funcs_in = []
+        for f in funcs_in:
+            self.funcs_in.append(function_from_user(f))
+        self.goal = np.array(goal)
+        if np.any(weights < 0):
             raise ValueError('Weight cannot be negative')
-        self.weight = float(weight)
-        # self.fixed = np.full(0, False) # What is this line for?
+        self.weights = np.array(weights)
+        self.dofs = DOFs.from_functions([t.f_in for t in self.terms])
 
     @classmethod
-    def from_sigma(cls, f_in, goal, sigma):
+    def from_sigma(cls, funcs_in, goal, sigma):
         """
         Define the LeastSquaresTerm with sigma = 1 / sqrt(weight), so
 
         f_out = ((f_in - goal) / sigma) ** 2.
         """
-        if sigma == 0:
+        if np.any(sigma == 0):
             raise ValueError('sigma cannot be 0')
-        if not isnumber(sigma): # Bharat's comment: Do we need this check?
-            raise TypeError('sigma must be a float or int')
-        return cls(f_in, goal, 1.0 / float(sigma * sigma))
+        return cls(funcs_in, goal, 1.0 / (sigma * sigma))
 
     def f_out(self):
         """
         Return the overall value of this least-squares term.
         """
-        temp = self.f_in() - self.goal
-        # Below, np.dot works with both scalars and vectors.
-        return self.weight * np.dot(temp, temp)
+        temp = np.append([f() for f in self.funcs_in]) - self.goal
+        return self.weights * np.dot(temp, temp)
+
+    def __add__(self, other):
+        return LeastSquaresTerm(self.funcs_in + other.funcs_in,
+                                self.goal + other.goal,
+                                self.weights + other.weights)
+
+    def collect_dofs(self) -> None:
+        pass
+
+    def set_dofs(self, x: Array) -> None:
+        pass
+
+    def get_dofs(self) -> Array:
+        pass
+
+    def __call__(self, *args, **kwargs):
+        return np.sum(self.f_out())
+
+    def residuals(self):
 
 
 class LeastSquaresProblem:
