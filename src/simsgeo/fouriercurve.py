@@ -1,6 +1,10 @@
-from .curve import Curve
-import simsgeopp as sgpp
 import numpy as np
+from jax.ops import index, index_add
+import jax.numpy as jnp
+
+import simsgeopp as sgpp
+from .curve import Curve, JaxCurve
+
 
 class FourierCurve(sgpp.FourierCurve, Curve):
 
@@ -24,28 +28,24 @@ class FourierCurve(sgpp.FourierCurve, Curve):
     #     Curve.kappa_impl(self, kappa)
 
 
-
-from jax.ops import index, index_add
-import jax.numpy as jnp
-from math import pi
-from .curve import JaxCurve
-
-
 def jaxfouriercurve_pure(dofs, quadpoints, order):
-    k = len(dofs)//3
-    coeffs = [dofs[:k], dofs[k:(2*k)], dofs[(2*k):]]
+    k = len(dofs) // 3
+    coeffs = [dofs[:k], dofs[k:(2 * k)], dofs[(2 * k):]]
     points = quadpoints
     gamma = np.zeros((len(points), 3))
     for i in range(3):
         gamma = index_add(gamma, index[:, i], coeffs[i][0])
-        for j in range(1, order+1):
-            gamma = index_add(gamma, index[:, i], coeffs[i][2*j-1] * jnp.sin(2*pi*j*points))
-            gamma = index_add(gamma, index[:, i], coeffs[i][2*j]   * jnp.cos(2*pi*j*points))
+        for j in range(1, order + 1):
+            gamma = index_add(gamma, index[:, i],
+                              coeffs[i][2 * j - 1] * jnp.sin(
+                                  2 * jnp.pi * j * points))
+            gamma = index_add(gamma, index[:, i],
+                              coeffs[i][2 * j] * jnp.cos(
+                                  2 * jnp.pi * j * points))
     return gamma
 
 
 class JaxFourierCurve(JaxCurve):
-
     """ A Python+Jax implementation of the FourierCurve """
 
     def __init__(self, quadpoints, order):
@@ -54,10 +54,12 @@ class JaxFourierCurve(JaxCurve):
         pure = lambda dofs, points: jaxfouriercurve_pure(dofs, points, order)
         super().__init__(quadpoints, pure)
         self.order = order
-        self.coefficients = [np.zeros((2*order+1,)), np.zeros((2*order+1,)), np.zeros((2*order+1,))]
+        self.coefficients = [np.zeros((2 * order + 1,)),
+                             np.zeros((2 * order + 1,)),
+                             np.zeros((2 * order + 1,))]
 
     def num_dofs(self):
-        return 3*(2*self.order+1)
+        return 3 * (2 * self.order + 1)
 
     def get_dofs(self):
         return np.concatenate(self.coefficients)
@@ -67,8 +69,8 @@ class JaxFourierCurve(JaxCurve):
         for i in range(3):
             self.coefficients[i][0] = dofs[counter]
             counter += 1
-            for j in range(1, self.order+1):
-                self.coefficients[i][2*j-1] = dofs[counter]
+            for j in range(1, self.order + 1):
+                self.coefficients[i][2 * j - 1] = dofs[counter]
                 counter += 1
-                self.coefficients[i][2*j] = dofs[counter]
+                self.coefficients[i][2 * j] = dofs[counter]
                 counter += 1
