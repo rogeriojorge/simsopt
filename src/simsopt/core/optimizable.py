@@ -60,7 +60,7 @@ def function_from_user(target):
                         'with the user-supplied target ' + str(target))
 
 
-class DOF(Hashable):
+class DOF:
     """
     A generalized class to represent an individual degrees of freedom
     associated with optimizable functions.
@@ -87,12 +87,12 @@ class DOF(Hashable):
         self._lb = lower_bound
         self._ub = upper_bound
 
-    def __hash__(self):
-        return hash(":".join(map(str, [self.owner, self.name])))
+    #def __hash__(self):
+    #    return hash(":".join(map(str, [self.owner, self.name])))
 
-    @property
-    def extended_name(self) -> str:
-        return ":".join(map(str, [self.owner, self.name]))
+    #@property
+    #def extended_name(self) -> str:
+    #    return ":".join(map(str, [self.owner, self.name]))
 
     def __repr__(self) -> str:
         return "DOF: {}, value = {}, fixed = {}, bounds = ({}, {})".format(
@@ -210,17 +210,17 @@ class DOFs(MutableSequence):
             self.names = np.array(map(lambda i: "x[{}]".format(i),
                                       range(len(self.x))))
 
-        if free:
+        if free is not None:
             self.free = np.array(free)
         else:
             self.free = np.full(len(self.x), True)
 
-        if lower_bounds:
+        if lower_bounds is not None:
             self._lb = np.array(lower_bounds)
         else:
             self._lb = np.full(len(self.x), np.NINF)
 
-        if upper_bounds:
+        if upper_bounds is not None:
             self._ub = np.array(upper_bounds)
         else:
             self._ub = np.full(len(self.x), np.inf)

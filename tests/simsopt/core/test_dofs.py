@@ -2,8 +2,9 @@ import unittest
 import numpy as np
 from collections import Counter
 
-from simsopt.core.dofs import get_owners, DOF, DOFs
-from simsopt.core.functions import Identity, Adder, TestObject2, Rosenbrock, Affine
+from simsopt.core.optimizable import get_owners, DOF, DOFs
+from simsopt.core.new_functions import Identity, Adder, TestObject2, \
+                        Rosenbrock, Affine
 from simsopt.core.optimizable import Target
 
 class GetOwnersTests(unittest.TestCase):
@@ -81,40 +82,53 @@ class DOFTest(unittest.TestCase):
     Unit tests for simsopt.core.DOF class
     """
     def setUp(self):
-        self.func1 = lambda x, y: (x - 1) * (x - 1) + 0.1 * (x*x -y)
-        self.func2 = Rosenbrock().f
-        pass
+        rosen = Rosenbrock()
+        self.dof1 = DOF(rosen, 'x', 2.0, True, np.NINF, np.inf)
+        self.dof2 = DOF(rosen, 'y', 3.0, False, np.NINF, np.inf)
 
     def tearDown(self) -> None:
-        self.func1 = None
-        self.func2 = None
+        self.dof1 = None
+        self.dof2 = None
 
-    def test_hash(self):
-        self.assertFalse(True)
+    #def test_hash(self):
+    #    self.assertFalse(True)
 
-    def test_extended_name(self):
-        self.assertFalse(True)
+    #def test_extended_name(self):
+    #    self.assertFalse(True)
 
     def test_is_fixed(self):
-        self.assertTrue(False)
+        self.assertFalse(self.dof1.is_fixed())
+        self.assertTrue(self.dof2.is_fixed())
 
     def test_is_free(self):
-        self.assertTrue(False)
+        self.assertTrue(self.dof1.is_free())
+        self.assertFalse(self.dof2.is_free())
 
     def test_fix(self):
-        self.assertTrue(False)
+        self.dof1.fix()
+        self.assertTrue(self.dof1.is_fixed())
 
     def test_unfix(self):
-        self.assertTrue(False)
+        self.dof2.unfix()
+        self.assertTrue(self.dof2.is_free())
 
     def test_min(self):
-        self.assertTrue(False)
+        self.assertTrue(np.isclose(self.dof1.min, np.NINF))
+        self.dof1.min = -10.0
+        self.assertAlmostEqual(self.dof1.min, -10.0)
 
     def test_max(self):
-        self.assertTrue(False)
+        self.assertTrue(np.isclose(self.dof1.max, np.inf))
+        self.dof1.max = 1e2
+        self.assertAlmostEqual(self.dof1.max, 100.0)
 
-    def test_owner(self):
-        self.assertTrue(False)
+    #def test_owner(self):
+    #    self.assertTrue(False)
+
+    def test_x(self):
+        self.assertAlmostEqual(self.dof1.x, 2.0)
+        self.dof1.x = 10.0
+        self.assertAlmostEqual(self.dof1.x, 10.0)
 
 
 class DOFsTests(unittest.TestCase):
