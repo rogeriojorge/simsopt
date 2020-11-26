@@ -8,15 +8,16 @@ This module contains small utility functions and classes.
 
 import numpy as np
 from typing import Union
-from collections.abc import MutableSequence
+from nptyping import NDArray, Float, Int, Bool
+from collections.abc import Sequence
 from numbers import Integral, Real, Number
 
 
-Array = Union[MutableSequence, np.array]
-RealArray = Union[MutableSequence[Real], np.ndarray[Real]]
-IntArray = Union[MutableSequence[Integral], np.ndarray[Integral]]
-StrArray = Union[MutableSequence[str], np.ndarray[str]]
-BoolArray = Union[MutableSequence[Integral], np.ndarray[Integral]]
+Array = Union[Sequence, NDArray]
+RealArray = Union[Sequence[Real], NDArray[Float]]
+IntArray = Union[Sequence[Integral], NDArray[Int]]
+StrArray = Union[Sequence[str], NDArray[str]]
+BoolArray = Union[Sequence[bool], NDArray[Bool]]
 Key = Union[Integral, str]
 
 

@@ -16,7 +16,7 @@ from typing import Union
 from numbers import Real
 from mpi4py import MPI
 from .optimizable import DOFs
-from .util import Array
+from .util import Array, RealArray, IntArray
 from .optimizable import function_from_user, Optimizable, Target
 
 
@@ -35,10 +35,8 @@ class LeastSquaresTerm(Optimizable):
     f_out = weight * (f_in - goal) ** 2.
     """
 
-    def __init__(self,
-                 funcs_in: Sequence[Optimizable],
-                 goal: Union[Sequence, np.ndarray[Real]],
-                 weights: Union[Sequence, np.ndarray]):
+    def __init__(self, funcs_in: Sequence[Optimizable], goal: RealArray,
+                 weights: RealArray):
         """
 
         Args:
@@ -56,7 +54,8 @@ class LeastSquaresTerm(Optimizable):
         self.dofs = DOFs.from_functions([t.f_in for t in self.terms])
 
     @classmethod
-    def from_sigma(cls, funcs_in, goal, sigma):
+    def from_sigma(cls, funcs_in: Sequence[Optimizable], goal: RealArray,
+                   sigma: RealArray):
         """
         Define the LeastSquaresTerm with sigma = 1 / sqrt(weight), so
 
@@ -81,18 +80,18 @@ class LeastSquaresTerm(Optimizable):
     def collect_dofs(self) -> None:
         pass
 
-    def set_dofs(self, x: Array) -> None:
+    def set_dofs(self, x: Union[RealArray, IntArray]) -> None:
         pass
 
     def get_dofs(self) -> Array:
         pass
 
-    def __call__(self, x=None):
+    def __call__(self, x: Union[RealArray, IntArray] = None):
         if x is not None:
             self.x = x
         return np.sum(self.f_out())
 
-    def residuals(self, x=None):
+    def residuals(self, x: Union[RealArray, IntArray] = None):
         if x is not None:
             self.x = x
 
