@@ -7,7 +7,17 @@ This module contains small utility functions and classes.
 """
 
 import numpy as np
-import numbers
+from typing import Union
+from collections.abc import MutableSequence
+from numbers import Integral, Real, Number
+
+
+Array = Union[MutableSequence, np.array]
+RealArray = Union[MutableSequence[Real], np.ndarray[Real]]
+IntArray = Union[MutableSequence[Integral], np.ndarray[Integral]]
+StrArray = Union[MutableSequence[str], np.ndarray[str]]
+BoolArray = Union[MutableSequence[Integral], np.ndarray[Integral]]
+Key = Union[Integral, str]
 
 
 def isbool(val):
@@ -23,7 +33,7 @@ def isnumber(val):
     Test whether val is any kind of number, including both native
     python types or numpy types.
     """
-    return isinstance(val, numbers.Number)
+    return isinstance(val, Number)
 
 
 class Struct:

@@ -14,10 +14,9 @@ import warnings
 from collections.abc import Sequence
 from typing import Union
 from numbers import Real
-from scipy.optimize import least_squares
 from mpi4py import MPI
 from .optimizable import DOFs
-from .util import isnumber
+from .util import Array
 from .optimizable import function_from_user, Optimizable, Target
 
 
@@ -88,10 +87,18 @@ class LeastSquaresTerm(Optimizable):
     def get_dofs(self) -> Array:
         pass
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, x=None):
+        if x is not None:
+            self.x = x
         return np.sum(self.f_out())
 
-    def residuals(self):
+    def residuals(self, x=None):
+        if x is not None:
+            self.x = x
+
+        temp = np.append([f() for f in self.funcs_in]) - self.goal
+        return np.sqrt(self.weights) * temp
+
 
 
 class LeastSquaresProblem:

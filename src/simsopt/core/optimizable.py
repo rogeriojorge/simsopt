@@ -20,17 +20,12 @@ from mpi4py import MPI
 from deprecated import deprecated
 #from monty.json import MSONable
 
-from .util import unique
+from .util import unique, Array, RealArray, IntArray, StrArray, BoolArray, Key
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
 # Types
-Array = Union[MutableSequence, np.array]
-RealArray = Union[MutableSequence[Real], np.ndarray[Real]]
-IntArray = Union[MutableSequence[Integral], np.ndarray[Integral]]
-StrArray = Union[MutableSequence[str], np.ndarray[str]]
-BoolArray = Union[MutableSequence[Integral], np.ndarray[Integral]]
-Key = Union[Integral, str]  # To denote arguments for accessing individual dof
+  # To denote arguments for accessing individual dof
 
 def get_owners(obj, owners_so_far=[]):
     """
