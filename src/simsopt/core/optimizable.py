@@ -20,7 +20,7 @@ from mpi4py import MPI
 from deprecated import deprecated
 #from monty.json import MSONable
 
-from .util import unique, Array, RealArray, IntArray, StrArray, BoolArray, Key
+from .util import unique, Array, RealArray, StrArray, BoolArray, Key
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
@@ -208,22 +208,22 @@ class DOFs(MutableSequence):
             self.names = np.array(names)
         else:
             self.names = np.array(map(lambda i: "x[{}]".format(i),
-                                      range(len(self.x))))
+                                      range(len(self._x))))
 
         if free is not None:
             self.free = np.array(free)
         else:
-            self.free = np.full(len(self.x), True)
+            self.free = np.full(len(self._x), True)
 
         if lower_bounds is not None:
             self._lb = np.array(lower_bounds)
         else:
-            self._lb = np.full(len(self.x), np.NINF)
+            self._lb = np.full(len(self._x), np.NINF)
 
         if upper_bounds is not None:
             self._ub = np.array(upper_bounds)
         else:
-            self._ub = np.full(len(self.x), np.inf)
+            self._ub = np.full(len(self._x), np.inf)
 
     # Magic method associated with MutableSequence
     def __getitem__(self, key: Key) -> DOF:
@@ -231,9 +231,12 @@ class DOFs(MutableSequence):
             i = key
         elif isinstance(key, str): # Implement string indexing
             i, = np.where(self.names == key)
+            if not i.size:
+                raise IndexError("Element not found.")
         else:
             raise TypeError("Wrong type as index. Supply either an integer"
                             " or string for index.")
+
         return DOF(self.owners[i], self.names[i], self._x[i], self.free[i],
                    self._lb[i], self._ub[i])
 
@@ -244,7 +247,9 @@ class DOFs(MutableSequence):
         if isinstance(key, Integral):
             i = key
         elif isinstance(key, str):  # Implement string indexing
-            i, = np.where(self.names, key)
+            i, = np.where(self.names == key)
+            if not i.size:
+                raise IndexError("Element not found.")
         else:
             raise TypeError("Wrong type as index. Supply either an integer"
                             " or string for index.")
@@ -275,7 +280,9 @@ class DOFs(MutableSequence):
         if isinstance(key, Integral):
             i = key
         elif isinstance(key, str):
-            i, = np.where(self.names, key)
+            i, = np.where(self.names == key)
+            if not i.size:
+                raise IndexError("Element not found.")
         else:
             raise TypeError("Wrong type as index. Supply either an integer"
                             " or string for index.")
@@ -290,7 +297,7 @@ class DOFs(MutableSequence):
     # Magic method associated with MutableSequence
     def __len__(self) -> Integral:
         # TODO: Question - Shall we use self.x or self._x here?
-        return len(self.x)
+        return len(self.free)
 
     # Magic method associated with MutableSequence
     def __contains__(self, item: Union[DOF, Real, str]):
@@ -309,12 +316,12 @@ class DOFs(MutableSequence):
             return item in self.names
         elif isinstance(item, DOF):
             if item.name in self.names:
-                i, = np.index(self.names, item.name)
+                i, = np.where(self.names == item.name)
                 return all([item.owner == self.owners[i],
                             np.isclose(item.x, self._x[i]),
                             item.is_free() == self.free[i],
-                            np.isclose(item.min == self._lb[i]),
-                            np.isclose(item.max == self._ub[i])])
+                            np.isclose(item.min, self._lb[i]),
+                            np.isclose(item.max, self._ub[i])])
             else:
                 return False
         else:
@@ -382,7 +389,7 @@ class DOFs(MutableSequence):
         """
         if isinstance(key, str):
             if key in self.names: # Name matches, just replace
-                i, = np.where(self.names, key)
+                i, = np.where(self.names == key)
                 if isinstance(val, Real):
                     self._x[i] = val
                 else:
@@ -508,14 +515,14 @@ class DOFs(MutableSequence):
 
     def fix(self, key: Key) -> None:
         if isinstance(key, str):
-            i, = np.where(self.names, key)
+            i, = np.where(self.names == key)
         else:
             i = key
         self.free[i] = False
 
     def unfix(self, key: Key) -> None:
         if isinstance(key, str):
-            i, = np.where(self.names, key)
+            i, = np.where(self.names == key)
         else:
             i = key
         self.free[i] = True
@@ -617,6 +624,26 @@ class DOFs(MutableSequence):
     @property
     def bounds(self):
         return (self.lower_bounds, self.upper_bounds)
+
+    def update_upper_bound(self, key: Key, val: Real):
+        if isinstance(key, str):
+            self._ub[np.where(self.names == key)] = val
+        else:
+            self._ub[key] = val
+
+    def update_lower_bound(self, key: Key, val: Real):
+        if isinstance(key, str):
+            self._lb[np.where(self.names == key)] = val
+        else:
+            self._lb[key] = val
+
+    def update_bounds(self, key: Key, val: Tuple[Real]):
+        if isinstance(key, str):
+            self._lb[np.where(self.names == key)] = val[0]
+            self._ub[np.where(self.names == key)] = val[1]
+        else:
+            self._lb[key] = val[0]
+            self._ub[key] = val[1]
 
     # TODO: Move this method else where.
     @classmethod
@@ -1054,7 +1081,7 @@ class Optimizable(Callable, abc.ABC):
 
     #@deprecated(version='0.0.2', reason="You should use dofs property")
     @abc.abstractmethod
-    def get_dofs(self) -> Array:
+    def get_dofs(self) -> RealArray:
         """
 
         """
@@ -1062,7 +1089,7 @@ class Optimizable(Callable, abc.ABC):
 
     #@deprecated(version='0.0.2', reason="You should use dofs property")
     @abc.abstractmethod
-    def set_dofs(self, x: Array) -> None:
+    def set_dofs(self, x: RealArray) -> None:
         """
 
         Args:
@@ -1079,12 +1106,12 @@ class Optimizable(Callable, abc.ABC):
         """
 
     @property
-    def dofs(self) -> Array:
+    def dofs(self) -> RealArray:
         #return [dof.x for dof in self._dofs if dof.is_free()]
         return self._dofs.x
 
     @dofs.setter
-    def dofs(self, x: Array) -> None:
+    def dofs(self, x: RealArray) -> None:
         #i = 0
         #for dof in self._dofs:
         #    if dof.is_free():
@@ -1097,7 +1124,7 @@ class Optimizable(Callable, abc.ABC):
         self._dofs.x = x
 
     @property
-    def state(self) -> Array:
+    def state(self) -> RealArray:
         return self._dofs.x
 
     @property
@@ -1109,7 +1136,7 @@ class Optimizable(Callable, abc.ABC):
         self._dofs.x = x
 
     @property
-    def bounds(self) -> Array:
+    def bounds(self) -> RealArray:
         return self._dofs.bounds
 
     @property
