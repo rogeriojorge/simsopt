@@ -7,6 +7,8 @@ This module provides the LeastSquaresProblem class, as well as the
 associated class LeastSquaresTerm.
 """
 
+from __future__ import annotations
+
 import numpy as np
 import logging
 import warnings
@@ -22,8 +24,6 @@ from .optimizable import function_from_user, Optimizable, Target
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
-RealArray = Union[Sequence[Real], ]
-
 
 class LeastSquaresTerm(Optimizable):
     """
@@ -35,7 +35,9 @@ class LeastSquaresTerm(Optimizable):
     f_out = weight * (f_in - goal) ** 2.
     """
 
-    def __init__(self, funcs_in: Sequence[Optimizable], goal: RealArray,
+    def __init__(self,
+                 funcs_in: Sequence[Optimizable],
+                 goal: RealArray,
                  weights: RealArray):
         """
 
@@ -45,17 +47,22 @@ class LeastSquaresTerm(Optimizable):
             weights:
         """
         self.funcs_in = []
-        for f in funcs_in:
-            self.funcs_in.append(function_from_user(f))
+        #for f in funcs_in:
+        #    self.funcs_in.append(function_from_user(f))
         self.goal = np.array(goal)
         if np.any(weights < 0):
             raise ValueError('Weight cannot be negative')
         self.weights = np.array(weights)
-        self.dofs = DOFs.from_functions([t.f_in for t in self.terms])
+        #self._dofs = DOFs.from_functions([t.f_in for t in self.terms])
+        dofs = []
+        for f in funcs_in:
+            dofs.append(f._dofs)
 
     @classmethod
-    def from_sigma(cls, funcs_in: Sequence[Optimizable], goal: RealArray,
-                   sigma: RealArray):
+    def from_sigma(cls,
+                   funcs_in: Sequence[Optimizable],
+                   goal: RealArray,
+                   sigma: RealArray) -> LeastSquaresTerm:
         """
         Define the LeastSquaresTerm with sigma = 1 / sqrt(weight), so
 
@@ -72,19 +79,10 @@ class LeastSquaresTerm(Optimizable):
         temp = np.append([f() for f in self.funcs_in]) - self.goal
         return self.weights * np.dot(temp, temp)
 
-    def __add__(self, other):
+    def __add__(self, other: LeastSquaresTerm) -> LeastSquaresTerm:
         return LeastSquaresTerm(self.funcs_in + other.funcs_in,
                                 self.goal + other.goal,
                                 self.weights + other.weights)
-
-    def collect_dofs(self) -> None:
-        pass
-
-    def set_dofs(self, x: Union[RealArray, IntArray]) -> None:
-        pass
-
-    def get_dofs(self) -> Array:
-        pass
 
     def __call__(self, x: Union[RealArray, IntArray] = None):
         if x is not None:
