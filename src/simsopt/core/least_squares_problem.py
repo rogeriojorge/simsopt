@@ -36,9 +36,9 @@ class LeastSquaresTerm(Optimizable):
     """
 
     def __init__(self,
-                 funcs_in: Sequence[Optimizable],
-                 goal: RealArray,
-                 weights: RealArray):
+                 funcs_in: Union[Optimizable, Sequence[Optimizable]],
+                 goal: Union[Real, RealArray],
+                 weights: Union[Real, RealArray]):
         """
 
         Args:
@@ -46,23 +46,25 @@ class LeastSquaresTerm(Optimizable):
             goals:
             weights:
         """
-        self.funcs_in = []
-        #for f in funcs_in:
-        #    self.funcs_in.append(function_from_user(f))
-        self.goal = np.array(goal)
+        if isinstance(goal, Real):
+            self.goal = np.array([goal])
+        else:
+            self.goal = np.array(goal)
         if np.any(weights < 0):
             raise ValueError('Weight cannot be negative')
-        self.weights = np.array(weights)
-        #self._dofs = DOFs.from_functions([t.f_in for t in self.terms])
-        dofs = []
-        for f in funcs_in:
-            dofs.append(f._dofs)
+        if isinstance(weights, Real):
+            self.weights = np.array([weights])
+        else:
+            self.weights = np.array(weights)
+        if not isinstance(funcs_in, Sequence):
+            funcs_in = [funcs_in]
+        super().__init__(funcs_in=funcs_in)
 
     @classmethod
     def from_sigma(cls,
-                   funcs_in: Sequence[Optimizable],
-                   goal: RealArray,
-                   sigma: RealArray) -> LeastSquaresTerm:
+                   funcs_in: Union[Optimizable, Sequence[Optimizable]],
+                   goal: Union[Real, RealArray],
+                   sigma: Union[Real, RealArray]) -> LeastSquaresTerm:
         """
         Define the LeastSquaresTerm with sigma = 1 / sqrt(weight), so
 
@@ -70,30 +72,34 @@ class LeastSquaresTerm(Optimizable):
         """
         if np.any(sigma == 0):
             raise ValueError('sigma cannot be 0')
+        if isinstance(sigma, Real):
+            sigma = np.array([sigma])
+        else:
+            sigma = np.array(sigma)
+
         return cls(funcs_in, goal, 1.0 / (sigma * sigma))
 
-    def f_out(self):
+    def f(self):
         """
         Return the overall value of this least-squares term.
         """
-        temp = np.append([f() for f in self.funcs_in]) - self.goal
-        return self.weights * np.dot(temp, temp)
+        s = 0
+        for i, opt in enumerate(self.parents):
+            temp = opt() - self.goal[i]
+            s += self.weights[i] * np.dot(temp, temp)
+        return s
 
     def __add__(self, other: LeastSquaresTerm) -> LeastSquaresTerm:
-        return LeastSquaresTerm(self.funcs_in + other.funcs_in,
-                                self.goal + other.goal,
-                                self.weights + other.weights)
 
-    def __call__(self, x: Union[RealArray, IntArray] = None):
-        if x is not None:
-            self.x = x
-        return np.sum(self.f_out())
+        return LeastSquaresTerm(self.parents + other.parents,
+                                np.concatenate([self.goal, other.goal]),
+                                np.concatenate([self.weights, other.weights]))
 
     def residuals(self, x: Union[RealArray, IntArray] = None):
         if x is not None:
             self.x = x
 
-        temp = np.append([f() for f in self.funcs_in]) - self.goal
+        temp = np.append([f() for f in self.parents]) - self.goal
         return np.sqrt(self.weights) * temp
 
 

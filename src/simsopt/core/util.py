@@ -11,6 +11,7 @@ from typing import Union
 from collections.abc import Sequence
 from numbers import Integral, Real, Number
 from dataclasses import dataclass
+from abc import ABCMeta
 
 import numpy as np
 from nptyping import NDArray, Float, Int, Bool
@@ -82,3 +83,6 @@ class InstanceCounterMeta(type):
     def __init__(cls, name, bases, attrs):
         super().__init__(name, bases, attrs)
         cls._ids = itertools.count(1)
+
+class InstanceCounterABCMeta(InstanceCounterMeta, ABCMeta):
+    pass
