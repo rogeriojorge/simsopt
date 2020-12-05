@@ -9,163 +9,113 @@ representing a function. These functions are mostly used for testing.
 
 import numpy as np
 import logging
+import deprecated
 from mpi4py import MPI
-from .optimizable import Optimizable
+from typing import Union
+from .optimizable import Optimizable, DOFs, DOFsDataFrame
+from .util import Real, RealArray
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
 
+
+# Alternative Implementation of Identity
 class Identity(Optimizable):
-    """
-    This class represents a term in an objective function which is just
-    the identity. It has one degree of freedom, and the output of the function
-    is equal to this degree of freedom.
-    """
-    def __init__(self, x=0.0, fixed=False, dof_name=None):
-        self.x = x
-        self.dx = np.array([1.0])
-        self.dof_fixed = np.full(1, False)
-        self.dof_names = ['x']
+    def __init__(self,
+                 x: Real = 0.0,
+                 dof_name: str = None,
+                 dof_fixed: bool = False):
+        super().__init__([x],
+                         [dof_name] if dof_name is not None else None,
+                         [dof_fixed])
 
-    def __call__(self):
-        return self.x
-
-    def dJ(self):
-        return np.array([1.0])
-    
-    @property
     def f(self):
-        """
-        Same as the function J(), but a property instead of a function.
-        """
         return self.x
 
-    @property
-    def df(self):
-        """
-        Same as the function dJ(), but a property instead of a function.
-        """
+    def dJ(self, x: RealArray = None):
+        if x is not None:
+            if isinstance(x, Real):
+                self.x = [x]
+            else:
+                self.x = x
         return np.array([1.0])
-    
-    def get_dofs(self):
-        return np.array([self.x])
 
-    def set_dofs(self, xin):
-        self.x = xin[0]
 
 class Adder(Optimizable):
     """This class defines a minimal object that can be optimized. It has
     n degrees of freedom, and has a function that just returns the sum
     of these dofs. This class is used for testing.
     """
-
-    def __init__(self, n=3):
+    def __init__(self, n=3, x0=None, dof_names=None):
         self.n = n
-        self.x = np.zeros(n)
-        self.dof_fixed = np.full(n, False)
+        x = x0 if x0 is not None else np.zeros(n)
+        super().__init__(x, names=dof_names)
 
-    def J(self):
-        """
-        Returns the sum of the degrees of freedom.
-        """
-        return np.sum(self.x)
+    #def __call__(self, x: RealArray = None):
+    #    if x is not None:
+    #        self.x = x
+    #    if self.new_x:
+    #        self._val = np.sum(self._dofs.full_x)
+    #        self.new_x = False
+    #    return self._val
+    def f(self):
+        return np.sum(self._dofs.full_x)
 
     def dJ(self):
         return np.ones(self.n)
         
     @property
-    def f(self):
-        """
-        Same as the function J(), but a property instead of a function.
-        """
-        return self.J()
-    
-    @property
     def df(self):
         """
         Same as the function dJ(), but a property instead of a function.
         """
-        return np.ones(self.n)
-    
-    def get_dofs(self):
-        """
-        """
-        return self.x
+        return self.dJ()
 
-    def set_dofs(self, xin):
-        """
-        """
-        self.x = np.array(xin)
 
 class Rosenbrock(Optimizable):
     """
     This class defines a minimal object that can be optimized.
     """
-
     def __init__(self, b=100.0, x=0.0, y=0.0):
         self._sqrtb = np.sqrt(b)
-        self.dof_names = ['x', 'y']
-        self._x = x
-        self._y = y
-        self.dof_fixed = np.full(2, False)
+        super().__init__([x, y], names=['x', 'y'])
 
+    @property
     def term1(self):
         """
         Returns the first of the two quantities that is squared and summed.
         """
-        return self._x - 1
-        
+        #return self._x - 1
+        return self._dofs.full_x[0] - 1
+
+    @property
     def term2(self):
         """
         Returns the second of the two quantities that is squared and summed.
         """
-        return (self._x * self._x - self._y) / self._sqrtb
+        x = self._dofs.full_x[0]
+        y = self._dofs.full_x[1]
+        return (x * x - y) / self._sqrtb
 
+    @property
     def dterm1(self):
         """
         Returns the gradient of term1
         """
         return np.array([1.0, 0.0])
-    
+
+    @property
     def dterm2(self):
         """
         Returns the gradient of term2
         """
-        return np.array([2 * self._x, -1.0]) / self._sqrtb
-    
-    @property
-    def term1prop(self):
-        """
-        Same as term1, but a property rather than a callable function.
-        """
-        return self.term1()
-    
-    @property
-    def term2prop(self):
-        """
-        Same as term2, but a property rather than a callable function.
-        """
-        return self.term2()
-    
-    @property
-    def dterm1prop(self):
-        """
-        Same as dterm1, but a property rather than a callable function.
-        """
-        return self.dterm1()
-    
-    @property
-    def dterm2prop(self):
-        """
-        Same as dterm2, but a property rather than a callable function.
-        """
-        return self.dterm2()
+        return np.array([2 * self._dofs.full_x[0], -1.0]) / self._sqrtb
     
     def f(self):
         """
         Returns the total function, squaring and summing the two terms.
         """
-        t1 = self.term1()
-        t2 = self.term2()
+        t1 = self.term1
+        t2 = self.term2
         return t1 * t1 + t2 * t2
 
     def terms(self):
@@ -180,13 +130,7 @@ class Rosenbrock(Optimizable):
         """
         return np.array([[1.0, 0.0],
                          [2 * self._x / self._sqrtb, -1.0 / self._sqrtb]])
-    
-    def get_dofs(self):
-        return np.array([self._x, self._y])
 
-    def set_dofs(self, xin):
-        self._x = xin[0]
-        self._y = xin[1]
 
 class TestObject1(Optimizable):
     """
@@ -301,16 +245,10 @@ class Affine(Optimizable):
         self.nvals = nvals
         self.A = (np.random.rand(nvals, nparams) - 0.5) * 4
         self.B = (np.random.rand(nvals) - 0.5) * 4
-        self.x = np.zeros(nparams)
+        super().__init__(np.zeros(nparams))
 
-    def get_dofs(self):
-        return self.x
-
-    def set_dofs(self, x):
-        self.x = x
-
-    def J(self):
-        return np.matmul(self.A, self.x) + self.B
+    def f(self):
+        return np.matmul(self.A, self.full_x) + self.B
 
     def dJ(self):
         return self.A
