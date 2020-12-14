@@ -1,9 +1,92 @@
 import unittest
 import numpy as np
 from simsopt.core.optimizable import Optimizable
-from simsopt.core.functions import Adder
+from simsopt.core.functions import Adder, Rosenbrock
 
-class OptimizableTests(unittest.TestCase, Optimizable):
+class DOFTests(unittest.TestCase):
+    pass
+
+class DOFsTests(unittest.TestCase):
+    pass
+
+class OptimizableTests(unittest.TestCase):
+    def setUp(self) -> None:
+        pass
+
+    def tearDown(self) -> None:
+        pass
+
+    def test_name(self):
+        pass
+
+    def test_hash(self):
+        pass
+
+    def test_dof_size(self):
+        pass
+
+    def test_full_dof_size(self):
+        pass
+
+    def test_local_dof_size(self):
+        pass
+
+    def test_local_full_dof_size(self):
+        pass
+
+    def test_dofs(self):
+        pass
+
+    def test_local_dofs(self):
+        pass
+
+    def test_transitive_relation(self):
+        pass
+
+    def test_parent_dof_fix(self):
+        pass
+
+    def test_call_with_arguments(self):
+        pass
+
+    def test_fix(self):
+        pass
+
+    def test_unfix(self):
+        pass
+
+    def test_fix_all(self):
+        pass
+
+    def test_unfix_all(self):
+        pass
+
+    def test_get_ancestors(self):
+        pass
+
+    def test_is_free(self):
+        pass
+
+    def test_is_fixed(self):
+        pass
+
+    def test_bounds(self):
+        pass
+
+    def test_lower_bounds(self):
+        pass
+
+    def test_upper_bounds(self):
+        pass
+
+    def test_local_lower_bounds(self):
+        pass
+
+    def test_local_upper_bounds(self):
+        pass
+
+
+class OldOptimizableTests(unittest.TestCase, Optimizable):
     def get_dofs(self):
         pass
 
