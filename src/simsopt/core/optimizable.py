@@ -416,14 +416,14 @@ class Optimizable(Callable, Hashable, metaclass=InstanceCounterABCMeta):
         free_dof_size = 0
         full_dof_size = 0
         for opt in (self.ancestors + [self]):
-            size = opt.local_free_dof_size
+            size = opt.local_dof_size
             free_dof_size += size
-            full_dof_size += opt.local_dof_size
+            full_dof_size += opt.local_full_dof_size
             dof_indices.append(free_dof_size)
         self.dof_indices = dict(zip(self.ancestors + [self],
                                     zip(dof_indices[:-1], dof_indices[1:])))
-        self._free_dof_size = free_dof_size + self.local_free_dof_size
-        self._full_dof_size =  full_dof_size + self.local_dof_size
+        self._free_dof_size = free_dof_size + self.local_dof_size
+        self._full_dof_size =  full_dof_size + self.local_full_dof_size
 
         self._children = [] # This gets populated when the object is passed
                             # as argument to another Optimizable object
@@ -493,7 +493,7 @@ class Optimizable(Callable, Hashable, metaclass=InstanceCounterABCMeta):
         return self._free_dof_size
 
     @property
-    def local_fulldof_size(self) -> Integral:
+    def local_full_dof_size(self) -> Integral:
         return len(self._dofs)
 
     @property
@@ -737,6 +737,19 @@ class Target(Optimizable):
     def set_dofs(self, v):
         pass
 
+
+def function_from_user(target):
+    """
+    Given a user-supplied "target" to be optimized, extract the
+    associated callable function.
+    """
+    if callable(target):
+        return target
+    elif hasattr(target, 'J') and callable(target.J):
+        return target.J
+    else:
+        raise TypeError('Unable to find a callable function associated '
+                        'with the user-supplied target ' + str(target))
 
 # TODO: make_optimizable function should be reimplemented to account for
 # TODO: reimplementation of Optimizable class

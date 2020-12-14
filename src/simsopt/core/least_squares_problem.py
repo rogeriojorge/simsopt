@@ -18,8 +18,8 @@ from typing import Union
 from numbers import Real
 from mpi4py import MPI
 from .optimizable import DOFs
-from .util import Array, RealArray, IntArray
-from .optimizable import function_from_user, Optimizable, Target
+from .util import RealArray, IntArray
+from .optimizable import Optimizable, Target
 
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)

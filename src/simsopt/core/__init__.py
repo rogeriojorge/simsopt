@@ -2,7 +2,7 @@
 # Copyright (c) HiddenSymmetries Development Team.
 # Distributed under the terms of the LGPL License
 
-from .optimizable import Optimizable, Target, optimizable
+from .optimizable import Optimizable, Target
 from .surface import SurfaceRZFourier, SurfaceGarabedian
 from .least_squares_problem import LeastSquaresTerm, LeastSquaresProblem
 from .serial_solve import least_squares_serial_solve

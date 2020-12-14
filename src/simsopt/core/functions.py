@@ -12,7 +12,7 @@ import logging
 import deprecated
 from mpi4py import MPI
 from typing import Union
-from .optimizable import Optimizable, DOFs, DOFsDataFrame
+from .optimizable import Optimizable, DOFs
 from .util import Real, RealArray
 
 logger = logging.getLogger('[{}]'.format(MPI.COMM_WORLD.Get_rank()) + __name__)
