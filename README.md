@@ -13,8 +13,8 @@
 - [x] Example that uses simsgeo
 - [x] Optimize either RBC/ZBS or Garabedian coefficients
 - [x] MPI
-- [ ] SPEC
-- [ ] Boozer-coordinate transformation
+- [x] SPEC
+- [x] Boozer-coordinate transformation
 - [ ] epsilon_effective
 - [ ] Standard (non-least-squares) optimization problem
 - [ ] Bound constraints
