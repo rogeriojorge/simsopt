@@ -9,21 +9,21 @@ class SurfaceXYZFourier : public Surface<Array> {
      coordinates using the following Fourier series:
 
      \hat x(theta, phi) = \sum_{m=0}^{mpol} \sum_{n=-ntor}^{ntor} [
-     x_{c,m,n} \cos(m \theta - n nfp \phi)
-     + x_{s,m,n} \sin(m \theta - n nfp \phi)
+       x_{c,m,n} \cos(m \theta - n nfp \phi)
+       + x_{s,m,n} \sin(m \theta - n nfp \phi)
      ]
 
      \hat y(theta, phi) = \sum_{m=0}^{mpol} \sum_{n=-ntor}^{ntor} [
-     y_{c,m,n} \cos(m \theta - n nfp \phi)
-     + y_{s,m,n} \sin(m \theta - n nfp \phi)
+         y_{c,m,n} \cos(m \theta - n nfp \phi)
+         + y_{s,m,n} \sin(m \theta - n nfp \phi)
      ]
 
      x = \hat x * \cos(\phi) - \hat y * \sin(\phi)
      y = \hat x * \sin(\phi) + \hat y * \cos(\phi)
 
      z(theta, phi) = \sum_{m=0}^{mpol} \sum_{n=-ntor}^{ntor} [
-     z_{c,m,n} \cos(m \theta - n nfp \phi)
-     + z_{s,m,n} \sin(m \theta - n nfp \phi)
+         z_{c,m,n} \cos(m \theta - n nfp \phi)
+         + z_{s,m,n} \sin(m \theta - n nfp \phi)
      ]
 
      When enforcing stellarator symmetry, we set the
@@ -87,17 +87,26 @@ class SurfaceXYZFourier : public Surface<Array> {
     int shift = (mpol + 1) * (2 * ntor + 1);
     int counter = 0;
     if (stellsym) {
-      for (int i = ntor; i < shift; ++i) xc.data()[i] = dofs[counter++];
-      for (int i = ntor + 1; i < shift; ++i) ys.data()[i] = dofs[counter++];
-      for (int i = ntor + 1; i < shift; ++i) zs.data()[i] = dofs[counter++];
+      for (int i = ntor; i < shift; ++i)
+        xc.data()[i] = dofs[counter++];
+      for (int i = ntor + 1; i < shift; ++i)
+        ys.data()[i] = dofs[counter++];
+      for (int i = ntor + 1; i < shift; ++i)
+        zs.data()[i] = dofs[counter++];
 
     } else {
-      for (int i = ntor; i < shift; ++i) xc.data()[i] = dofs[counter++];
-      for (int i = ntor + 1; i < shift; ++i) xs.data()[i] = dofs[counter++];
-      for (int i = ntor; i < shift; ++i) yc.data()[i] = dofs[counter++];
-      for (int i = ntor + 1; i < shift; ++i) ys.data()[i] = dofs[counter++];
-      for (int i = ntor; i < shift; ++i) zc.data()[i] = dofs[counter++];
-      for (int i = ntor + 1; i < shift; ++i) zs.data()[i] = dofs[counter++];
+      for (int i = ntor; i < shift; ++i)
+        xc.data()[i] = dofs[counter++];
+      for (int i = ntor + 1; i < shift; ++i)
+        xs.data()[i] = dofs[counter++];
+      for (int i = ntor; i < shift; ++i)
+        yc.data()[i] = dofs[counter++];
+      for (int i = ntor + 1; i < shift; ++i)
+        ys.data()[i] = dofs[counter++];
+      for (int i = ntor; i < shift; ++i)
+        zc.data()[i] = dofs[counter++];
+      for (int i = ntor + 1; i < shift; ++i)
+        zs.data()[i] = dofs[counter++];
     }
   }
 
@@ -106,16 +115,25 @@ class SurfaceXYZFourier : public Surface<Array> {
     int shift = (mpol + 1) * (2 * ntor + 1);
     int counter = 0;
     if (stellsym) {
-      for (int i = ntor; i < shift; ++i) res[counter++] = xc.data()[i];
-      for (int i = ntor + 1; i < shift; ++i) res[counter++] = ys.data()[i];
-      for (int i = ntor + 1; i < shift; ++i) res[counter++] = zs.data()[i];
+      for (int i = ntor; i < shift; ++i)
+        res[counter++] = xc.data()[i];
+      for (int i = ntor + 1; i < shift; ++i)
+        res[counter++] = ys.data()[i];
+      for (int i = ntor + 1; i < shift; ++i)
+        res[counter++] = zs.data()[i];
     } else {
-      for (int i = ntor; i < shift; ++i) res[counter++] = xc.data()[i];
-      for (int i = ntor + 1; i < shift; ++i) res[counter++] = xs.data()[i];
-      for (int i = ntor; i < shift; ++i) res[counter++] = yc.data()[i];
-      for (int i = ntor + 1; i < shift; ++i) res[counter++] = ys.data()[i];
-      for (int i = ntor; i < shift; ++i) res[counter++] = zc.data()[i];
-      for (int i = ntor + 1; i < shift; ++i) res[counter++] = zs.data()[i];
+      for (int i = ntor; i < shift; ++i)
+        res[counter++] = xc.data()[i];
+      for (int i = ntor + 1; i < shift; ++i)
+        res[counter++] = xs.data()[i];
+      for (int i = ntor; i < shift; ++i)
+        res[counter++] = yc.data()[i];
+      for (int i = ntor + 1; i < shift; ++i)
+        res[counter++] = ys.data()[i];
+      for (int i = ntor; i < shift; ++i)
+        res[counter++] = zc.data()[i];
+      for (int i = ntor + 1; i < shift; ++i)
+        res[counter++] = zs.data()[i];
     }
     return res;
   }

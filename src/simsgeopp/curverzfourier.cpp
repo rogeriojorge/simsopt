@@ -73,13 +73,19 @@ class CurveRZFourier : public Curve<Array> {
   void set_dofs_impl(const vector<double>& dofs) override {
     int counter = 0;
     if (stellsym) {
-      for (int i = 0; i < order + 1; ++i) rc.data()[i] = dofs[counter++];
-      for (int i = 0; i < order; ++i) zs.data()[i] = dofs[counter++];
+      for (int i = 0; i < order + 1; ++i)
+        rc.data()[i] = dofs[counter++];
+      for (int i = 0; i < order; ++i)
+        zs.data()[i] = dofs[counter++];
     } else {
-      for (int i = 0; i < order + 1; ++i) rc.data()[i] = dofs[counter++];
-      for (int i = 0; i < order; ++i) rs.data()[i] = dofs[counter++];
-      for (int i = 0; i < order + 1; ++i) zc.data()[i] = dofs[counter++];
-      for (int i = 0; i < order; ++i) zs.data()[i] = dofs[counter++];
+      for (int i = 0; i < order + 1; ++i)
+        rc.data()[i] = dofs[counter++];
+      for (int i = 0; i < order; ++i)
+        rs.data()[i] = dofs[counter++];
+      for (int i = 0; i < order + 1; ++i)
+        zc.data()[i] = dofs[counter++];
+      for (int i = 0; i < order; ++i)
+        zs.data()[i] = dofs[counter++];
     }
   }
 
@@ -87,13 +93,19 @@ class CurveRZFourier : public Curve<Array> {
     auto res = vector<double>(num_dofs(), 0.);
     int counter = 0;
     if (stellsym) {
-      for (int i = 0; i < order + 1; ++i) res[counter++] = rc[i];
-      for (int i = 0; i < order; ++i) res[counter++] = zs[i];
+      for (int i = 0; i < order + 1; ++i)
+        res[counter++] = rc[i];
+      for (int i = 0; i < order; ++i)
+        res[counter++] = zs[i];
     } else {
-      for (int i = 0; i < order + 1; ++i) res[counter++] = rc[i];
-      for (int i = 0; i < order; ++i) res[counter++] = rs[i];
-      for (int i = 0; i < order + 1; ++i) res[counter++] = zc[i];
-      for (int i = 0; i < order; ++i) res[counter++] = zs[i];
+      for (int i = 0; i < order + 1; ++i)
+        res[counter++] = rc[i];
+      for (int i = 0; i < order; ++i)
+        res[counter++] = rs[i];
+      for (int i = 0; i < order + 1; ++i)
+        res[counter++] = zc[i];
+      for (int i = 0; i < order; ++i)
+        res[counter++] = zs[i];
     }
     return res;
   }

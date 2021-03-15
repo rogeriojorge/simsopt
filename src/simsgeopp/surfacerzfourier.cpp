@@ -65,14 +65,20 @@ class SurfaceRZFourier : public Surface<Array> {
     int shift = (mpol + 1) * (2 * ntor + 1);
     int counter = 0;
     if (stellsym) {
-      for (int i = ntor; i < shift; ++i) rc.data()[i] = dofs[counter++];
-      for (int i = ntor + 1; i < shift; ++i) zs.data()[i] = dofs[counter++];
+      for (int i = ntor; i < shift; ++i)
+        rc.data()[i] = dofs[counter++];
+      for (int i = ntor + 1; i < shift; ++i)
+        zs.data()[i] = dofs[counter++];
 
     } else {
-      for (int i = ntor; i < shift; ++i) rc.data()[i] = dofs[counter++];
-      for (int i = ntor + 1; i < shift; ++i) rs.data()[i] = dofs[counter++];
-      for (int i = ntor; i < shift; ++i) zc.data()[i] = dofs[counter++];
-      for (int i = ntor + 1; i < shift; ++i) zs.data()[i] = dofs[counter++];
+      for (int i = ntor; i < shift; ++i)
+        rc.data()[i] = dofs[counter++];
+      for (int i = ntor + 1; i < shift; ++i)
+        rs.data()[i] = dofs[counter++];
+      for (int i = ntor; i < shift; ++i)
+        zc.data()[i] = dofs[counter++];
+      for (int i = ntor + 1; i < shift; ++i)
+        zs.data()[i] = dofs[counter++];
     }
   }
 
@@ -81,13 +87,19 @@ class SurfaceRZFourier : public Surface<Array> {
     int shift = (mpol + 1) * (2 * ntor + 1);
     int counter = 0;
     if (stellsym) {
-      for (int i = ntor; i < shift; ++i) res[counter++] = rc.data()[i];
-      for (int i = ntor + 1; i < shift; ++i) res[counter++] = zs.data()[i];
+      for (int i = ntor; i < shift; ++i)
+        res[counter++] = rc.data()[i];
+      for (int i = ntor + 1; i < shift; ++i)
+        res[counter++] = zs.data()[i];
     } else {
-      for (int i = ntor; i < shift; ++i) res[counter++] = rc.data()[i];
-      for (int i = ntor + 1; i < shift; ++i) res[counter++] = rs.data()[i];
-      for (int i = ntor; i < shift; ++i) res[counter++] = zc.data()[i];
-      for (int i = ntor + 1; i < shift; ++i) res[counter++] = zs.data()[i];
+      for (int i = ntor; i < shift; ++i)
+        res[counter++] = rc.data()[i];
+      for (int i = ntor + 1; i < shift; ++i)
+        res[counter++] = rs.data()[i];
+      for (int i = ntor; i < shift; ++i)
+        res[counter++] = zc.data()[i];
+      for (int i = ntor + 1; i < shift; ++i)
+        res[counter++] = zs.data()[i];
     }
     return res;
   }
