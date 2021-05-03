@@ -267,3 +267,29 @@ class Reiman(MagneticField):
 
         if compute_derivatives >= 1:
             self._dB_by_dX = sgpp.ReimandB(self.iota0, self.iota1, self.k, self.epsilonk, self.m0, points)
+
+class PoloidalField(MagneticField):
+    ''' Magnetic field purely in the poloidal direction, that is, in the theta direction of a poloidal-toroidal coordinate system.
+       Its modulus is given by B = mu0*I/(2*pi*r) where mu0 is the vacuum permeability, I is the toroidal current and r is the minor radius
+
+    Args:
+        R0: major radius of the magnetic axis
+        I:  toroidal current in Amps
+    '''
+    def __init__(self, R0, I):
+        self.R0=R0
+        self.I=I
+        self.mu0=4*np.pi*1e-7
+
+    def compute(self, points, compute_derivatives=0):
+        assert compute_derivatives <= 2
+
+        x = points[:, 0]
+        y = points[:, 1]
+        z = points[:, 2]
+
+        phi   = np.arctan2(y-self.R0,x-self.R0)
+        r     = np.sqrt((x-self.R0)**2+(y-self.R0)**2+(z-self.R0)**2)
+        theta = np.arcsin(z/r)
+        thetaUnitVectorOver_r = np.vstack(( -np.divide(np.sin(theta),r)*np.cos(phi), -np.divide(np.sin(theta),r)*np.sin(phi), np.divide(np.cos(theta),r))).T
+        self._B = self.mu0*self.I/(2*np.pi)*thetaUnitVectorOver_r

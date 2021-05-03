@@ -1,4 +1,4 @@
-from simsopt.geo.magneticfieldclasses import ToroidalField, ScalarPotentialRZMagneticField, CircularCoil, Dommaschk, Reiman
+from simsopt.geo.magneticfieldclasses import ToroidalField, ScalarPotentialRZMagneticField, CircularCoil, Dommaschk, Reiman, PoloidalField
 from simsopt.geo.curvexyzfourier import CurveXYZFourier
 from simsopt.geo.magneticfield import MagneticFieldSum
 from simsopt.geo.curverzfourier import CurveRZFourier
@@ -297,6 +297,22 @@ class Testing(unittest.TestCase):
         points  += pointVar * (np.random.rand(*points.shape)-0.5)
         # Bfield from class
         Bfield   = Reiman(iota0=iota0, iota1=iota1, k=k, epsilonk=epsilonk)
+        Bfield.set_points(points)
+        B1   = Bfield.B()
+        dB1  = Bfield.dB_by_dX()
+        # print(B1)
+        # print(dB1)
+
+    def test_poloidal_field(self):
+        R0       = 1
+        I        = 5.5e5
+        # point locations
+        pointVar = 1e-1
+        npoints  = 4
+        points   = np.asarray(npoints * [[-1.41513202e-03, 8.99999382e-01, -3.14473221e-04]])
+        points  += pointVar * (np.random.rand(*points.shape)-0.5)
+        # Bfield from class
+        Bfield   = PoloidalField(R0=R0,I=I)
         Bfield.set_points(points)
         B1   = Bfield.B()
         dB1  = Bfield.dB_by_dX()
