@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 from simsopt.field.biotsavart import BiotSavart
-from simsopt.geo.surfaceobjectives import ToroidalFlux, QfmResidual, parameter_derivatives, Volume, PrincipalCurvature, MajorRadius, Iotas, NonQuasiSymmetricRatio, BoozerResidual
+from simsopt.geo.surfaceobjectives import ToroidalFlux, QfmResidual, parameter_derivatives, Volume, PrincipalCurvature, MajorRadius, Iotas, NonQuasiSymmetricRatio, NonQuasiIsodynamicRatio, BoozerResidual
 from simsopt.configs.zoo import get_data
 from .surface_test_helpers import get_surface, get_exact_surface, get_boozer_surface
 
@@ -357,6 +357,22 @@ class NonQSRatioTests(unittest.TestCase):
 
         taylor_test1(f, df, coeffs,
                      epsilons=np.power(2., -np.asarray(range(13, 19))))
+
+
+class NonQIRatioSmokeTests(unittest.TestCase):
+    def test_nonQIratio_value_is_finite(self):
+        bs, boozer_surface = get_boozer_surface(label="Volume", boozer_type='exact', optimize_G=True, weight_inv_modB=False)
+        objective = NonQuasiIsodynamicRatio(boozer_surface, bs, sDIM=10, nphi=31, nalpha=5, nBj=7, nphi_out=41)
+        value = objective.J()
+        self.assertTrue(np.isfinite(value))
+        self.assertGreaterEqual(value, 0.0)
+
+    def test_nonQIratio_derivative_is_finite(self):
+        bs, boozer_surface = get_boozer_surface(label="Volume", boozer_type='exact', optimize_G=True, weight_inv_modB=False)
+        objective = NonQuasiIsodynamicRatio(boozer_surface, bs, sDIM=6, nphi=21, nalpha=3, nBj=5, nphi_out=21)
+        gradient = objective.dJ()
+        self.assertEqual(gradient.shape, bs.x.shape)
+        self.assertTrue(np.all(np.isfinite(gradient)))
 
 
 class BoozerResidualTests(unittest.TestCase):
