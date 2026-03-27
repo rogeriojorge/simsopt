@@ -1,5 +1,9 @@
 import unittest
 import numpy as np
+import os
+import subprocess
+import sys
+import tempfile
 from simsopt.field.biotsavart import BiotSavart
 from simsopt.geo.surfaceobjectives import ToroidalFlux, QfmResidual, parameter_derivatives, Volume, PrincipalCurvature, MajorRadius, Iotas, NonQuasiSymmetricRatio, NonQuasiIsodynamicRatio, BoozerResidual
 from simsopt.configs.zoo import get_data
@@ -373,6 +377,59 @@ class NonQIRatioSmokeTests(unittest.TestCase):
         gradient = objective.dJ()
         self.assertEqual(gradient.shape, bs.x.shape)
         self.assertTrue(np.all(np.isfinite(gradient)))
+
+    def test_nonQIratio_value_changes_under_small_perturbation(self):
+        bs, boozer_surface = get_boozer_surface(label="Volume", boozer_type='exact', optimize_G=True, weight_inv_modB=False)
+        objective = NonQuasiIsodynamicRatio(boozer_surface, bs, sDIM=6, nphi=21, nalpha=3, nBj=5, nphi_out=21)
+        x0 = bs.x.copy()
+        j0 = objective.J()
+
+        np.random.seed(3)
+        perturbation = 1e-3 * (np.random.rand(*x0.shape) - 0.5)
+        bs.x = x0 + perturbation
+        objective.recompute_bell()
+        j1 = objective.J()
+
+        bs.x = x0
+        objective.recompute_bell()
+        self.assertTrue(np.isfinite(j1))
+        self.assertGreater(abs(j1 - j0), 1e-10)
+
+
+class BoozerQIExampleTests(unittest.TestCase):
+    def test_boozer_qi_example_reduced_runtime(self):
+        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
+        script = os.path.join(repo_root, "examples", "2_Intermediate", "boozerQI.py")
+        env = os.environ.copy()
+        env.update({
+            "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
+            "SIMSOPT_BOOZER_QI_SKIP_TAYLOR": "1",
+            "SIMSOPT_BOOZER_QI_MAXITER": "0",
+            "SIMSOPT_BOOZER_QI_MPOL": "3",
+            "SIMSOPT_BOOZER_QI_NTOR": "3",
+            "SIMSOPT_BOOZER_QI_SDIM": "6",
+            "SIMSOPT_BOOZER_QI_NPHI": "21",
+            "SIMSOPT_BOOZER_QI_NALPHA": "3",
+            "SIMSOPT_BOOZER_QI_NBJ": "5",
+            "SIMSOPT_BOOZER_QI_NPHI_OUT": "21",
+        })
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env["SIMSOPT_BOOZER_QI_OUT_DIR"] = tmpdir
+            result = subprocess.run(
+                [sys.executable, script],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        if result.returncode != 0:
+            self.fail(f"boozerQI.py failed with return code {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+
+        self.assertIn("Running 2_Intermediate/boozerQI.py", result.stdout)
+        self.assertIn("Optimization success=", result.stdout)
 
 
 class BoozerResidualTests(unittest.TestCase):
