@@ -1,4 +1,5 @@
 import unittest
+import json
 import numpy as np
 import os
 import subprocess
@@ -20,8 +21,10 @@ sys.meta_path[:] = filtered_meta_path
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from simsopt._core.optimizable import load
 from simsopt.field.biotsavart import BiotSavart
-from simsopt.geo.surfaceobjectives import ToroidalFlux, QfmResidual, parameter_derivatives, Volume, PrincipalCurvature, MajorRadius, Iotas, NonQuasiSymmetricRatio, NonQuasiIsodynamicRatio, BoozerResidual
+from simsopt.geo.surfaceobjectives import ToroidalFlux, QfmResidual, parameter_derivatives, Volume, PrincipalCurvature, MajorRadius, Iotas, NonQuasiSymmetricRatio, NonQuasiIsodynamicRatio, BoozerResidual, _make_shuffled_target_values
+from simsopt.geo.surfacerzfourier import SurfaceRZFourier
 from simsopt.configs.zoo import get_data
 from .surface_test_helpers import get_surface, get_exact_surface, get_boozer_surface
 
@@ -380,6 +383,24 @@ class NonQSRatioTests(unittest.TestCase):
 
 
 class NonQIRatioSmokeTests(unittest.TestCase):
+    def test_nonQI_shuffle_target_handles_duplicate_locations(self):
+        phi_values = np.linspace(0.0, 1.0, 9)
+        bounce_distances = np.array([0.2, 0.2, 0.2])
+        bounce_levels = np.array([0.0, 0.5, 1.0])
+        branch_locations = np.array([0.4, 0.4, 0.4, 0.4, 0.4])
+        mean_bounce_distances = np.array([0.2, 0.2, 0.2])
+
+        target_values = _make_shuffled_target_values(
+            phi_values,
+            bounce_distances,
+            bounce_levels,
+            branch_locations,
+            mean_bounce_distances,
+        )
+
+        self.assertEqual(target_values.shape, phi_values.shape)
+        self.assertTrue(np.all(np.isfinite(target_values)))
+
     def test_nonQIratio_value_is_finite(self):
         bs, boozer_surface = get_boozer_surface(label="Volume", boozer_type='exact', optimize_G=True, weight_inv_modB=False)
         objective = NonQuasiIsodynamicRatio(boozer_surface, bs, sDIM=10, nphi=31, nalpha=5, nBj=7, nphi_out=41)
@@ -393,6 +414,31 @@ class NonQIRatioSmokeTests(unittest.TestCase):
         gradient = objective.dJ()
         self.assertEqual(gradient.shape, bs.x.shape)
         self.assertTrue(np.all(np.isfinite(gradient)))
+
+    def test_nonQIratio_derivative_directional_finite_difference(self):
+        bs, boozer_surface = get_boozer_surface(label="Volume", boozer_type='ls', optimize_G=True, weight_inv_modB=False)
+        objective = NonQuasiIsodynamicRatio(boozer_surface, bs, sDIM=6, nphi=21, nalpha=3, nBj=5, nphi_out=21, phi_shift=0.0)
+        coeffs = bs.x.copy()
+        np.random.seed(1)
+        direction = np.random.rand(*coeffs.shape) - 0.5
+
+        bs.x = coeffs
+        objective.recompute_bell()
+        gradient = objective.dJ()
+        directional_derivative = float(gradient @ direction)
+
+        eps = 2.0 ** -17
+        bs.x = coeffs + eps * direction
+        objective.recompute_bell()
+        plus_value = objective.J()
+        bs.x = coeffs - eps * direction
+        objective.recompute_bell()
+        minus_value = objective.J()
+
+        bs.x = coeffs
+        objective.recompute_bell()
+        finite_difference = (plus_value - minus_value) / (2 * eps)
+        self.assertLess(abs(directional_derivative - finite_difference), 5e-5)
 
     def test_nonQIratio_value_changes_under_small_perturbation(self):
         bs, boozer_surface = get_boozer_surface(label="Volume", boozer_type='exact', optimize_G=True, weight_inv_modB=False)
@@ -413,9 +459,22 @@ class NonQIRatioSmokeTests(unittest.TestCase):
 
 
 class BoozerQIExampleTests(unittest.TestCase):
-    def test_boozer_qi_example_reduced_runtime(self):
+    def _run_boozer_qi(self, env):
         repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
         script = os.path.join(repo_root, "examples", "2_Intermediate", "boozerQI.py")
+        pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = os.path.join(repo_root, "src") if not pythonpath else os.path.join(repo_root, "src") + os.pathsep + pythonpath
+        return subprocess.run(
+            [sys.executable, script],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_boozer_qi_example_reduced_runtime(self):
+        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
         env = os.environ.copy()
         env.update({
             "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
@@ -429,25 +488,247 @@ class BoozerQIExampleTests(unittest.TestCase):
             "SIMSOPT_BOOZER_QI_NBJ": "5",
             "SIMSOPT_BOOZER_QI_NPHI_OUT": "21",
         })
-        pythonpath = env.get("PYTHONPATH")
-        env["PYTHONPATH"] = os.path.join(repo_root, "src") if not pythonpath else os.path.join(repo_root, "src") + os.pathsep + pythonpath
-
         with tempfile.TemporaryDirectory() as tmpdir:
             env["SIMSOPT_BOOZER_QI_OUT_DIR"] = tmpdir
-            result = subprocess.run(
-                [sys.executable, script],
-                cwd=repo_root,
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            result = self._run_boozer_qi(env)
 
         if result.returncode != 0:
             self.fail(f"boozerQI.py failed with return code {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
 
         self.assertIn("Running 2_Intermediate/boozerQI.py", result.stdout)
         self.assertIn("Optimization success=", result.stdout)
+
+    def test_boozer_qi_example_fd_comparison(self):
+        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
+        env = os.environ.copy()
+        env.update({
+            "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
+            "SIMSOPT_BOOZER_QI_SKIP_TAYLOR": "1",
+            "SIMSOPT_BOOZER_QI_COMPARE_FD": "1",
+            "SIMSOPT_BOOZER_QI_COMPARE_FD_DIRS": "1",
+            "SIMSOPT_BOOZER_QI_COMPARE_FD_EPS": str(2.0 ** -18),
+            "SIMSOPT_BOOZER_QI_MAXITER": "0",
+            "SIMSOPT_BOOZER_QI_MPOL": "3",
+            "SIMSOPT_BOOZER_QI_NTOR": "3",
+            "SIMSOPT_BOOZER_QI_SDIM": "6",
+            "SIMSOPT_BOOZER_QI_NPHI": "21",
+            "SIMSOPT_BOOZER_QI_NALPHA": "3",
+            "SIMSOPT_BOOZER_QI_NBJ": "5",
+            "SIMSOPT_BOOZER_QI_NPHI_OUT": "21",
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env["SIMSOPT_BOOZER_QI_OUT_DIR"] = tmpdir
+            result = self._run_boozer_qi(env)
+
+        if result.returncode != 0:
+            self.fail(f"boozerQI.py FD comparison failed with return code {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+
+        self.assertIn("Max FD relative error=", result.stdout)
+        fd_line = next(line for line in result.stdout.splitlines() if line.startswith("Max FD relative error="))
+        fd_error = float(fd_line.split("=", 1)[1])
+        self.assertLess(fd_error, 1.0e-4)
+
+    def test_boozer_qi_example_reduced_progress(self):
+        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
+        env = os.environ.copy()
+        env.update({
+            "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
+            "SIMSOPT_BOOZER_QI_SKIP_TAYLOR": "1",
+            "SIMSOPT_BOOZER_QI_MAXITER": "3",
+            "SIMSOPT_BOOZER_QI_MPOL": "3",
+            "SIMSOPT_BOOZER_QI_NTOR": "3",
+            "SIMSOPT_BOOZER_QI_SDIM": "6",
+            "SIMSOPT_BOOZER_QI_NPHI": "21",
+            "SIMSOPT_BOOZER_QI_NALPHA": "3",
+            "SIMSOPT_BOOZER_QI_NBJ": "5",
+            "SIMSOPT_BOOZER_QI_NPHI_OUT": "21",
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env["SIMSOPT_BOOZER_QI_OUT_DIR"] = tmpdir
+            history_path = os.path.join(tmpdir, "history.json")
+            env["SIMSOPT_BOOZER_QI_HISTORY_PATH"] = history_path
+            result = self._run_boozer_qi(env)
+            if result.returncode != 0:
+                self.fail(f"boozerQI.py reduced progress run failed with return code {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+            with open(history_path, "r", encoding="utf-8") as stream:
+                history = json.load(stream)
+
+        self.assertLess(history["result"]["best_J"], history["result"]["initial_J"])
+
+    def test_boozer_qi_example_optimizer_comparison(self):
+        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
+        env = os.environ.copy()
+        env.update({
+            "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
+            "SIMSOPT_BOOZER_QI_SKIP_TAYLOR": "1",
+            "SIMSOPT_BOOZER_QI_COMPARE_OPTIMIZERS": "1",
+            "SIMSOPT_BOOZER_QI_COMPARE_OPTIMIZERS_SUBSPACE": "4",
+            "SIMSOPT_BOOZER_QI_COMPARE_OPTIMIZERS_MAXITER": "1",
+            "SIMSOPT_BOOZER_QI_MAXITER": "0",
+            "SIMSOPT_BOOZER_QI_MPOL": "3",
+            "SIMSOPT_BOOZER_QI_NTOR": "3",
+            "SIMSOPT_BOOZER_QI_SDIM": "6",
+            "SIMSOPT_BOOZER_QI_NPHI": "21",
+            "SIMSOPT_BOOZER_QI_NALPHA": "3",
+            "SIMSOPT_BOOZER_QI_NBJ": "5",
+            "SIMSOPT_BOOZER_QI_NPHI_OUT": "21",
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env["SIMSOPT_BOOZER_QI_OUT_DIR"] = tmpdir
+            history_path = os.path.join(tmpdir, "history.json")
+            env["SIMSOPT_BOOZER_QI_HISTORY_PATH"] = history_path
+            result = self._run_boozer_qi(env)
+            if result.returncode != 0:
+                self.fail(f"boozerQI.py optimizer comparison failed with return code {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+            with open(history_path, "r", encoding="utf-8") as stream:
+                history = json.load(stream)
+
+        self.assertIn("Optimizer L-BFGS-B:", result.stdout)
+        self.assertIn("optimizer_comparison", history)
+        self.assertEqual(len(history["optimizer_comparison"]["results"]), 3)
+        self.assertTrue(all("fun" in entry for entry in history["optimizer_comparison"]["results"]))
+
+    def test_boozer_qi_example_exact_report(self):
+        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
+        env = os.environ.copy()
+        env.update({
+            "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
+            "SIMSOPT_BOOZER_QI_SKIP_TAYLOR": "1",
+            "SIMSOPT_BOOZER_QI_EXACT_REPORT": "1",
+            "SIMSOPT_BOOZER_QI_EXACT_REPORT_MAXITER": "20",
+            "SIMSOPT_BOOZER_QI_MAXITER": "0",
+            "SIMSOPT_BOOZER_QI_MPOL": "3",
+            "SIMSOPT_BOOZER_QI_NTOR": "3",
+            "SIMSOPT_BOOZER_QI_SDIM": "6",
+            "SIMSOPT_BOOZER_QI_NPHI": "21",
+            "SIMSOPT_BOOZER_QI_NALPHA": "3",
+            "SIMSOPT_BOOZER_QI_NBJ": "5",
+            "SIMSOPT_BOOZER_QI_NPHI_OUT": "21",
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env["SIMSOPT_BOOZER_QI_OUT_DIR"] = tmpdir
+            history_path = os.path.join(tmpdir, "history.json")
+            env["SIMSOPT_BOOZER_QI_HISTORY_PATH"] = history_path
+            result = self._run_boozer_qi(env)
+            if result.returncode != 0:
+                self.fail(f"boozerQI.py exact report failed with return code {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+            with open(history_path, "r", encoding="utf-8") as stream:
+                history = json.load(stream)
+
+        self.assertIn("Exact final report", result.stdout)
+        self.assertIn("exact_report", history)
+        self.assertTrue(history["exact_report"]["success"])
+        self.assertIn("total_J", history["exact_report"])
+
+    def test_boozer_qi_example_exports_vmec_and_coils(self):
+        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
+        env = os.environ.copy()
+        env.update({
+            "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
+            "SIMSOPT_BOOZER_QI_SKIP_TAYLOR": "1",
+            "SIMSOPT_BOOZER_QI_MAXITER": "0",
+            "SIMSOPT_BOOZER_QI_MPOL": "3",
+            "SIMSOPT_BOOZER_QI_NTOR": "3",
+            "SIMSOPT_BOOZER_QI_SDIM": "6",
+            "SIMSOPT_BOOZER_QI_NPHI": "21",
+            "SIMSOPT_BOOZER_QI_NALPHA": "3",
+            "SIMSOPT_BOOZER_QI_NBJ": "5",
+            "SIMSOPT_BOOZER_QI_NPHI_OUT": "21",
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env["SIMSOPT_BOOZER_QI_OUT_DIR"] = tmpdir
+            history_path = os.path.join(tmpdir, "history.json")
+            coils_path = os.path.join(tmpdir, "coils_export.json")
+            restart_path = os.path.join(tmpdir, "surface_restart.json")
+            vmec_input_path = os.path.join(tmpdir, "input.boozer_qi")
+            vmec_export_diagnostics_path = os.path.join(tmpdir, "vmec_export_surface_diagnostics.json")
+            vmec_export_cross_sections_plot = os.path.join(tmpdir, "vmec_export_cross_sections.png")
+            vmec_export_surface_plot = os.path.join(tmpdir, "vmec_export_surface_3d.png")
+            env["SIMSOPT_BOOZER_QI_HISTORY_PATH"] = history_path
+            env["SIMSOPT_BOOZER_QI_EXPORT_COILS_JSON"] = coils_path
+            env["SIMSOPT_BOOZER_QI_EXPORT_SURFACE_RESTART"] = restart_path
+            env["SIMSOPT_BOOZER_QI_EXPORT_VMEC_INPUT"] = vmec_input_path
+            result = self._run_boozer_qi(env)
+            if result.returncode != 0:
+                self.fail(f"boozerQI.py export run failed with return code {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
+            with open(history_path, "r", encoding="utf-8") as stream:
+                history = json.load(stream)
+
+            self.assertTrue(os.path.exists(coils_path))
+            self.assertTrue(os.path.exists(restart_path))
+            self.assertTrue(os.path.exists(vmec_input_path))
+            self.assertTrue(os.path.exists(vmec_export_diagnostics_path))
+            self.assertTrue(os.path.exists(vmec_export_cross_sections_plot))
+            self.assertTrue(os.path.exists(vmec_export_surface_plot))
+            self.assertIsInstance(load(coils_path), BiotSavart)
+            boundary = SurfaceRZFourier.from_vmec_input(vmec_input_path)
+            with open(vmec_export_diagnostics_path, "r", encoding="utf-8") as stream:
+                vmec_export_diagnostics = json.load(stream)
+
+        self.assertEqual(Path(history["artifacts"]["coils_json"]).resolve(), Path(coils_path).resolve())
+        self.assertEqual(Path(history["artifacts"]["surface_restart"]).resolve(), Path(restart_path).resolve())
+        self.assertEqual(Path(history["artifacts"]["vmec_input"]).resolve(), Path(vmec_input_path).resolve())
+        self.assertEqual(Path(history["artifacts"]["vmec_export_diagnostics"]).resolve(), Path(vmec_export_diagnostics_path).resolve())
+        self.assertEqual(Path(history["artifacts"]["vmec_export_cross_sections_plot"]).resolve(), Path(vmec_export_cross_sections_plot).resolve())
+        self.assertEqual(Path(history["artifacts"]["vmec_export_surface_plot"]).resolve(), Path(vmec_export_surface_plot).resolve())
+        self.assertEqual(boundary.nfp, 3)
+        self.assertLess(vmec_export_diagnostics["selected"]["relative_l2"], 1.0e-2)
+        self.assertGreaterEqual(len(vmec_export_diagnostics["candidates"]), 1)
+        self.assertIn("Wrote optimized Biot-Savart JSON", result.stdout)
+        self.assertIn("Wrote Boozer surface restart", result.stdout)
+        self.assertIn("Wrote VMEC input", result.stdout)
+        self.assertIn("Wrote VMEC export diagnostics", result.stdout)
+
+    def test_boozer_qi_example_surface_restart_continuation(self):
+        env = os.environ.copy()
+        env.update({
+            "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
+            "SIMSOPT_BOOZER_QI_SKIP_TAYLOR": "1",
+            "SIMSOPT_BOOZER_QI_MAXITER": "0",
+            "SIMSOPT_BOOZER_QI_MPOL": "3",
+            "SIMSOPT_BOOZER_QI_NTOR": "3",
+            "SIMSOPT_BOOZER_QI_SDIM": "6",
+            "SIMSOPT_BOOZER_QI_NPHI": "21",
+            "SIMSOPT_BOOZER_QI_NALPHA": "3",
+            "SIMSOPT_BOOZER_QI_NBJ": "5",
+            "SIMSOPT_BOOZER_QI_NPHI_OUT": "21",
+        })
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            seed_dir = os.path.join(tmpdir, "seed")
+            cont_dir = os.path.join(tmpdir, "continuation")
+            os.makedirs(seed_dir, exist_ok=True)
+            os.makedirs(cont_dir, exist_ok=True)
+            coils_path = os.path.join(seed_dir, "coils.json")
+            restart_path = os.path.join(seed_dir, "surface_restart.json")
+            seed_history_path = os.path.join(seed_dir, "history.json")
+            seed_env = env.copy()
+            seed_env["SIMSOPT_BOOZER_QI_OUT_DIR"] = seed_dir
+            seed_env["SIMSOPT_BOOZER_QI_EXPORT_COILS_JSON"] = coils_path
+            seed_env["SIMSOPT_BOOZER_QI_EXPORT_SURFACE_RESTART"] = restart_path
+            seed_env["SIMSOPT_BOOZER_QI_HISTORY_PATH"] = seed_history_path
+            seed_result = self._run_boozer_qi(seed_env)
+            if seed_result.returncode != 0:
+                self.fail(f"boozerQI.py seed run failed with return code {seed_result.returncode}\nstdout:\n{seed_result.stdout}\nstderr:\n{seed_result.stderr}")
+
+            cont_env = env.copy()
+            cont_env.update({
+                "SIMSOPT_BOOZER_QI_OUT_DIR": cont_dir,
+                "SIMSOPT_BOOZER_QI_HISTORY_PATH": os.path.join(cont_dir, "history.json"),
+                "SIMSOPT_BOOZER_QI_COILS_JSON": coils_path,
+                "SIMSOPT_BOOZER_QI_SURFACE_RESTART": restart_path,
+                "SIMSOPT_BOOZER_QI_MPOL": "4",
+                "SIMSOPT_BOOZER_QI_NTOR": "4",
+            })
+            cont_result = self._run_boozer_qi(cont_env)
+            if cont_result.returncode != 0:
+                self.fail(f"boozerQI.py continuation run failed with return code {cont_result.returncode}\nstdout:\n{cont_result.stdout}\nstderr:\n{cont_result.stderr}")
+
+            with open(cont_env["SIMSOPT_BOOZER_QI_HISTORY_PATH"], "r", encoding="utf-8") as stream:
+                history = json.load(stream)
+
+        self.assertTrue(np.isfinite(history["result"]["initial_J"]))
+        self.assertIn("Using surface initializer from Boozer surface restart", cont_result.stdout)
 
 
 class BoozerResidualTests(unittest.TestCase):

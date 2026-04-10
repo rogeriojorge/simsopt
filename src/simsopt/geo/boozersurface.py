@@ -132,6 +132,30 @@ class BoozerSurface(Optimizable):
                 options['newton_tol'] = 1e-13
             if 'newton_maxiter' not in options:
                 options['newton_maxiter'] = 40
+            if 'exact_ls_fallback' not in options:
+                options['exact_ls_fallback'] = False
+            if 'exact_ls_constraint_weight' not in options:
+                options['exact_ls_constraint_weight'] = 1.0
+            if 'exact_ls_tol' not in options:
+                options['exact_ls_tol'] = 1e-10
+            if 'exact_ls_maxiter' not in options:
+                options['exact_ls_maxiter'] = max(80, 4 * options['newton_maxiter'])
+            if 'exact_ls_method' not in options:
+                options['exact_ls_method'] = 'trf'
+            if 'exact_ls_accept_residual_norm' not in options:
+                options['exact_ls_accept_residual_norm'] = 0.5
+            if 'exact_ls_accept_constraint_norm' not in options:
+                options['exact_ls_accept_constraint_norm'] = 1e-2
+            if 'exact_ls_accept_gradient_norm' not in options:
+                options['exact_ls_accept_gradient_norm'] = 1.0
+            if 'exact_ls_extent_factor' not in options:
+                options['exact_ls_extent_factor'] = 5.0
+            if 'exact_ls_extent_cap' not in options:
+                options['exact_ls_extent_cap'] = 10.0
+            if 'exact_ls_min_modB_mean' not in options:
+                options['exact_ls_min_modB_mean'] = 1e-3
+            if 'exact_ls_plu_regularization' not in options:
+                options['exact_ls_plu_regularization'] = 1e-8
         elif self.boozer_type == 'ls':
             if 'bfgs_tol' not in options:
                 options['bfgs_tol'] = 1e-10
@@ -146,6 +170,91 @@ class BoozerSurface(Optimizable):
             if 'weight_inv_modB' not in options:
                 options['weight_inv_modB'] = True
         self.options = options
+
+    def _snapshot_state(self):
+        return {
+            'surface_dofs': self.surface.get_dofs().copy(),
+            'need_to_run_code': self.need_to_run_code,
+            'res': getattr(self, 'res', None),
+        }
+
+    def _restore_state(self, snapshot):
+        self.surface.set_dofs(snapshot['surface_dofs'])
+        self.need_to_run_code = snapshot['need_to_run_code']
+        if snapshot['res'] is not None:
+            self.res = snapshot['res']
+
+    def _least_squares_state_diagnostics(self, ls_res, reference_extent):
+        xyz = self.surface.gamma().reshape((-1, 3))
+        extent = np.max(np.linalg.norm(xyz, axis=1))
+        self.biotsavart.set_points(xyz)
+        self.biotsavart.compute(0)
+        B = self.biotsavart.B().reshape(self.surface.gamma().shape)
+        modB = np.sqrt(np.sum(B**2, axis=2))
+        label_error = self.label.J() - self.targetlabel
+        constraint_norm = np.linalg.norm(ls_res['residual'][-2:]) if ls_res['residual'].size >= 2 else 0.0
+        residual_norm = np.linalg.norm(ls_res['residual'])
+        gradient_norm = np.linalg.norm(ls_res['gradient'])
+        max_extent = max(self.options['exact_ls_extent_cap'], self.options['exact_ls_extent_factor'] * reference_extent)
+        accepted = (
+            np.isfinite(extent)
+            and np.isfinite(residual_norm)
+            and np.isfinite(gradient_norm)
+            and extent <= max_extent
+            and np.mean(modB) >= self.options['exact_ls_min_modB_mean']
+            and abs(label_error) <= self.options['exact_ls_accept_constraint_norm']
+            and constraint_norm <= self.options['exact_ls_accept_constraint_norm']
+            and residual_norm <= self.options['exact_ls_accept_residual_norm']
+            and gradient_norm <= self.options['exact_ls_accept_gradient_norm']
+        )
+        return {
+            'accepted': accepted,
+            'extent': float(extent),
+            'mean_modB': float(np.mean(modB)),
+            'label_error': float(label_error),
+            'constraint_norm': float(constraint_norm),
+            'residual_norm': float(residual_norm),
+            'gradient_norm': float(gradient_norm),
+        }
+
+    def _run_exact_ls_fallback(self, iota, G, snapshot, failure_message=None):
+        self._restore_state(snapshot)
+        self.need_to_run_code = True
+        ls_res = self.minimize_boozer_penalty_constraints_ls(
+            tol=self.options['exact_ls_tol'],
+            maxiter=self.options['exact_ls_maxiter'],
+            constraint_weight=self.options['exact_ls_constraint_weight'],
+            iota=iota,
+            G=G,
+            method=self.options['exact_ls_method'],
+            weight_inv_modB=True,
+        )
+        ls_surface_dofs = self.surface.get_dofs().copy()
+        self.surface.set_dofs(snapshot['surface_dofs'])
+        reference_extent = np.max(np.linalg.norm(self.surface.gamma().reshape((-1, 3)), axis=1))
+        self.surface.set_dofs(ls_surface_dofs)
+        diagnostics = self._least_squares_state_diagnostics(ls_res, reference_extent)
+        ls_res['approximate'] = True
+        ls_res['message'] = failure_message
+        ls_res['fallback_diagnostics'] = diagnostics
+        if diagnostics['accepted']:
+            ls_res['success'] = True
+            self.res = ls_res
+            self.need_to_run_code = False
+            return ls_res
+
+        failure_res = {
+            'success': False,
+            'iota': iota,
+            'G': G,
+            'message': failure_message,
+            'approximate': False,
+            'fallback_diagnostics': diagnostics,
+        }
+        self._restore_state(snapshot)
+        self.res = failure_res
+        self.need_to_run_code = False
+        return failure_res
 
     def recompute_bell(self, parent=None):
         self.need_to_run_code = True
@@ -181,7 +290,15 @@ class BoozerSurface(Optimizable):
 
         # BoozerExact default solver
         if self.boozer_type == 'exact':
-            res = self.solve_residual_equation_exactly_newton(iota=iota, G=G, tol=self.options['newton_tol'], maxiter=self.options['newton_maxiter'], verbose=self.options['verbose'])
+            snapshot = self._snapshot_state()
+            try:
+                res = self.solve_residual_equation_exactly_newton(iota=iota, G=G, tol=self.options['newton_tol'], maxiter=self.options['newton_maxiter'], verbose=self.options['verbose'])
+            except np.linalg.LinAlgError as err:
+                if self.options['exact_ls_fallback']:
+                    return self._run_exact_ls_fallback(iota=iota, G=G, snapshot=snapshot, failure_message=str(err))
+                raise
+            if not res.get('success', False) and self.options['exact_ls_fallback']:
+                return self._run_exact_ls_fallback(iota=iota, G=G, snapshot=snapshot, failure_message=res.get('message'))
             return res
 
         # BoozerLS default solver
@@ -626,9 +743,19 @@ class BoozerSurface(Optimizable):
                 x, constraint_weight, G is not None, weight_inv_modB)[1]
 
         res = least_squares(fun, x, jac=jac, method=method, ftol=tol, xtol=tol, gtol=tol, x_scale=1.0, max_nfev=maxiter)
+        jacobian = res.jac
+        normal_matrix = jacobian.T @ jacobian
+        regularization = self.options.get('exact_ls_plu_regularization', 1e-8)
+        if regularization > 0:
+            normal_matrix = normal_matrix + regularization * np.eye(normal_matrix.shape[0])
+        P, L, U = lu(normal_matrix)
         resdict = {
             "info": res, "residual": res.fun, "gradient": res.grad, "jacobian": res.jac, "success": res.status > 0,
             "G": None,
+            "PLU": (P, L, U),
+            "vjp": partial(boozer_surface_dlsqgrad_dcoils_vjp, weight_inv_modB=weight_inv_modB),
+            "weight_inv_modB": weight_inv_modB,
+            "type": "ls",
         }
         if G is None:
             s.set_dofs(res.x[:-1])

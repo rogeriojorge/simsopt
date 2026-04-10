@@ -18,7 +18,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 import numpy as np
-from simsopt.geo.surfaceobjectives import _get_branches, _normalize_modB_global, _qi_objective_single_surface, _repair_shifted_qi_branches, _squash_left_branch, _squash_right_branch, _stretch_left_branch, _stretch_right_branch
+from simsopt.geo.surfaceobjectives import _get_branches, _normalize_modB_global, _qi_objective_and_gradient_from_raw_lines, _qi_objective_single_surface, _qi_residual_vector_single_surface, _repair_shifted_qi_branches, _squash_left_branch, _squash_right_branch, _stretch_left_branch, _stretch_right_branch
 
 
 FIXTURE = Path(__file__).resolve().parent.parent / "test_files" / "boozer_qi_reference.json"
@@ -104,6 +104,50 @@ class BoozerQIMathTests(unittest.TestCase):
         case = self.data["scalar_residual"]
         result = _qi_objective_single_surface(case["target"], case["source"], case["nalpha"], case["nphi_out"])
         self.assertAlmostEqual(result, case["expected"])
+
+    def test_qi_objective_pullback_matches_residual_norm(self):
+        phi = np.linspace(0.0, 1.0, 7)
+        modB_lines = np.array([
+            [0.90, 1.10, 1.00],
+            [0.65, 0.85, 0.80],
+            [0.30, 0.55, 0.45],
+            [0.15, 0.20, 0.18],
+            [0.40, 0.52, 0.47],
+            [0.78, 0.95, 0.88],
+            [1.05, 1.18, 1.12],
+        ])
+        value, _ = _qi_objective_and_gradient_from_raw_lines(modB_lines, phi, nBj=5, nphi_out=13)
+        residual = _qi_residual_vector_single_surface(modB_lines, phi, nBj=5, nphi_out=13)
+        self.assertAlmostEqual(value, float(np.dot(residual, residual)), places=12)
+
+    def test_qi_objective_pullback_matches_finite_difference(self):
+        phi = np.linspace(0.0, 1.0, 7)
+        modB_lines = np.array([
+            [0.92, 1.08, 1.02],
+            [0.68, 0.84, 0.79],
+            [0.33, 0.51, 0.43],
+            [0.14, 0.18, 0.16],
+            [0.38, 0.49, 0.44],
+            [0.76, 0.93, 0.87],
+            [1.03, 1.16, 1.10],
+        ])
+        value, gradient = _qi_objective_and_gradient_from_raw_lines(modB_lines, phi, nBj=5, nphi_out=13)
+        self.assertTrue(np.isfinite(value))
+        self.assertTrue(np.all(np.isfinite(gradient)))
+
+        eps = 1e-7
+        finite_difference = np.zeros_like(modB_lines)
+        for row in range(modB_lines.shape[0]):
+            for column in range(modB_lines.shape[1]):
+                plus = modB_lines.copy()
+                minus = modB_lines.copy()
+                plus[row, column] += eps
+                minus[row, column] -= eps
+                plus_value, _ = _qi_objective_and_gradient_from_raw_lines(plus, phi, nBj=5, nphi_out=13)
+                minus_value, _ = _qi_objective_and_gradient_from_raw_lines(minus, phi, nBj=5, nphi_out=13)
+                finite_difference[row, column] = (plus_value - minus_value) / (2 * eps)
+
+        np.testing.assert_allclose(gradient, finite_difference, rtol=1e-4, atol=1e-5)
 
 
 if __name__ == "__main__":

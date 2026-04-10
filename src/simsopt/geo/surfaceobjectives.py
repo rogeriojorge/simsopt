@@ -1,4 +1,6 @@
 import numpy as np
+import jax.numpy as jnp
+from jax import value_and_grad
 from scipy.interpolate import UnivariateSpline
 
 import simsoptpp as sopp
@@ -664,10 +666,7 @@ class MajorRadius(Optimizable):
         self._J = surface.major_radius()
 
         booz_surf = self.boozer_surface
-        iota = booz_surf.res['iota']
-        G = booz_surf.res['G']
-        P, L, U = booz_surf.res['PLU']
-        dconstraint_dcoils_vjp = self.boozer_surface.res['vjp']
+        iota, G, P, L, U, dconstraint_dcoils_vjp = _get_boozer_linearization(booz_surf)
 
         # tack on dJ_diota = dJ_dG = 0 to the end of dJ_ds
         dJ_ds = np.zeros(L.shape[0])
@@ -774,10 +773,7 @@ class NonQuasiSymmetricRatio(Optimizable):
         self._J = np.mean(dS * B_nonQS**2) / np.mean(dS * B_QS**2)
 
         booz_surf = self.boozer_surface
-        iota = booz_surf.res['iota']
-        G = booz_surf.res['G']
-        P, L, U = booz_surf.res['PLU']
-        dconstraint_dcoils_vjp = self.boozer_surface.res['vjp']
+        iota, G, P, L, U, dconstraint_dcoils_vjp = _get_boozer_linearization(booz_surf)
 
         dJ_by_dB = self.dJ_by_dB().reshape((-1, 3))
         dJ_by_dcoils = self.biotsavart.B_vjp(dJ_by_dB)
@@ -1042,6 +1038,514 @@ def _repair_shifted_qi_branches(left_branch, right_branch):
     return left_branch, right_branch
 
 
+def _enforce_strictly_increasing(values, min_spacing=None):
+    values = np.asarray(values, dtype=float).copy()
+    if values.size <= 1:
+        return values
+
+    finite_values = values[np.isfinite(values)]
+    scale = max(1.0, float(np.max(np.abs(finite_values)))) if finite_values.size else 1.0
+    spacing = 1e-12 * scale if min_spacing is None else float(min_spacing)
+
+    if not np.isfinite(values[0]):
+        values[0] = 0.0
+    for index in range(1, values.size):
+        if not np.isfinite(values[index]) or values[index] <= values[index - 1]:
+            values[index] = values[index - 1] + spacing
+    return values
+
+
+def _squash_left_branch_sources(branch):
+    values = np.asarray(branch, dtype=float).copy()
+    sources = np.arange(values.size, dtype=int)
+    if values.size <= 1:
+        return sources
+
+    index_max = int(np.argmax(values))
+    values[:index_max] = values[index_max]
+    sources[:index_max] = sources[index_max]
+    for index in range(len(values) - 1):
+        if values[index] <= values[index + 1]:
+            index_final = len(values) - 1
+            for follower in range(index + 1, len(values)):
+                if values[follower] < values[index]:
+                    index_final = follower
+                    break
+            values[index:index_final] = values[index]
+            sources[index:index_final] = sources[index]
+    return sources
+
+
+def _squash_right_branch_sources(branch):
+    values = np.asarray(branch, dtype=float).copy()
+    sources = np.arange(values.size, dtype=int)
+    if values.size <= 1:
+        return sources
+
+    index_max = int(np.argmax(values))
+    values[index_max:] = values[index_max]
+    sources[index_max:] = sources[index_max]
+    for index in range(len(values) - 1, 1, -1):
+        if values[index - 1] >= values[index]:
+            index_final = 0
+            for follower in range(index - 1, 1, -1):
+                if values[follower] < values[index]:
+                    index_final = follower
+                    break
+            values[index_final + 1:index] = values[index]
+            sources[index_final + 1:index] = sources[index]
+    return sources
+
+
+def _build_branch_crossing_descriptor(phi_values, branch, level, maximum, minimum):
+    phi_values = np.asarray(phi_values, dtype=float)
+    branch = np.asarray(branch, dtype=float)
+    descriptor = {"level": float(level)}
+
+    if phi_values.size == 0:
+        descriptor.update({"mode": "constant", "phi1": 0.0, "phi2": 0.0})
+        return descriptor
+    if phi_values.size == 1 or branch.size == 1:
+        phi_single = float(phi_values[0])
+        descriptor.update({"mode": "constant", "phi1": phi_single, "phi2": phi_single})
+        return descriptor
+
+    differences = branch - level
+    sign_products = differences[:-1] * differences[1:]
+    indices = np.where(sign_products < 0)[0]
+    indices = np.sort(indices)
+
+    if level == minimum or level < minimum:
+        phi_minimum = float(phi_values[int(np.argmin(branch))])
+        descriptor.update({"mode": "constant", "phi1": phi_minimum, "phi2": phi_minimum})
+        return descriptor
+    if level == maximum or level > maximum:
+        descriptor.update({"mode": "constant", "phi1": float(phi_values[0]), "phi2": float(phi_values[-1])})
+        return descriptor
+
+    if len(indices) < 2:
+        indices = np.where(sign_products <= 0)[0]
+        for index in range(1, len(indices)):
+            if indices[index] != indices[index - 1] + 1:
+                indices = np.asarray([indices[index - 1], indices[-1]])
+                break
+
+    if len(indices) < 2:
+        if len(indices) == 1:
+            descriptor.update({"mode": "single-segment", "index": int(indices[0])})
+            return descriptor
+
+        equal_hits = np.where(np.isclose(branch, level, rtol=0.0, atol=1e-14))[0]
+        if equal_hits.size >= 2:
+            descriptor.update({
+                "mode": "constant",
+                "phi1": float(phi_values[int(equal_hits[0])]),
+                "phi2": float(phi_values[int(equal_hits[-1])]),
+            })
+            return descriptor
+        if equal_hits.size == 1:
+            phi_hit = float(phi_values[int(equal_hits[0])])
+            descriptor.update({"mode": "constant", "phi1": phi_hit, "phi2": phi_hit})
+            return descriptor
+
+        phi_hit = float(phi_values[int(np.argmin(np.abs(differences)))])
+        descriptor.update({"mode": "constant", "phi1": phi_hit, "phi2": phi_hit})
+        return descriptor
+
+    if len(indices) > 2:
+        indices = np.asarray([indices[0], indices[-1]])
+
+    descriptor.update({"mode": "pair", "index_1": int(indices[0]), "index_2": int(indices[1])})
+    return descriptor
+
+
+def _build_shift_repair_linearization(left_branch, right_branch):
+    left = np.asarray(left_branch, dtype=float).copy()
+    right = np.asarray(right_branch, dtype=float).copy()
+    left_fixes = []
+    right_fixes = []
+    count = len(left)
+    for index in range(count - 1):
+        fix_left = left[index + 1] - left[index] < 0
+        left_fixes.append(bool(fix_left))
+        if fix_left:
+            right[-index - 2] = right[-index - 2] + (left[index] - left[index + 1] + 1e-12)
+            left[index + 1] = left[index] + 1e-12
+
+        fix_right = right[-index - 1] - right[-index - 2] < 0
+        right_fixes.append(bool(fix_right))
+        if fix_right:
+            left[index + 1] = left[index + 1] + (right[-index - 1] - right[-index - 2] - 1e-12)
+            right[-index - 2] = right[-index - 1] - 1e-12
+
+    return {"left_fixes": left_fixes, "right_fixes": right_fixes}
+
+
+def _build_strictly_increasing_linearization(values, min_spacing=None):
+    values = np.asarray(values, dtype=float).copy()
+    finite_values = values[np.isfinite(values)]
+    scale = max(1.0, float(np.max(np.abs(finite_values)))) if finite_values.size else 1.0
+    spacing = 1e-12 * scale if min_spacing is None else float(min_spacing)
+    adjusted = values.copy()
+    reset_first = not np.isfinite(adjusted[0]) if adjusted.size else False
+    if reset_first:
+        adjusted[0] = 0.0
+    fix_flags = []
+    for index in range(1, adjusted.size):
+        fix = (not np.isfinite(adjusted[index])) or adjusted[index] <= adjusted[index - 1]
+        fix_flags.append(bool(fix))
+        if fix:
+            adjusted[index] = adjusted[index - 1] + spacing
+    return {"reset_first": reset_first, "fix_flags": fix_flags, "spacing": spacing}
+
+
+def _build_piecewise_linear_interval_indices(x_nodes, x_query):
+    x_nodes = np.asarray(x_nodes, dtype=float)
+    x_query = np.asarray(x_query, dtype=float)
+    if x_nodes.size <= 1:
+        return np.zeros_like(x_query, dtype=int)
+    return np.clip(np.searchsorted(x_nodes, x_query, side='right') - 1, 0, x_nodes.size - 2)
+
+
+def _trapz_1d(values, x_values):
+    values = np.asarray(values, dtype=float)
+    x_values = np.asarray(x_values, dtype=float)
+    if values.size <= 1:
+        return 0.0
+    return float(np.sum(0.5 * (values[1:] + values[:-1]) * (x_values[1:] - x_values[:-1])))
+
+
+def _stretch_left_branch_jax(phi_values, branch, pmax=50, pmin=15):
+    if branch.shape[0] < 2:
+        return jnp.zeros_like(branch)
+    span = phi_values[-1] - phi_values[0]
+    x_values = (phi_values - phi_values[0]) / span
+    left_half = x_values < 0.5
+    r1 = 1.0 - branch[0]
+    r2 = -branch[-1]
+    cosine_term = (jnp.cos(2.0 * jnp.pi * x_values) + 1.0) / 2.0
+    return left_half * r1 * cosine_term**pmax + (~left_half) * r2 * cosine_term**pmin
+
+
+def _stretch_right_branch_jax(phi_values, branch, pmax=50, pmin=15):
+    if branch.shape[0] < 2:
+        return jnp.zeros_like(branch)
+    span = phi_values[-1] - phi_values[0]
+    x_values = (phi_values - phi_values[0]) / span
+    left_half = x_values < 0.5
+    r1 = 1.0 - branch[-1]
+    r2 = -branch[0]
+    cosine_term = (jnp.cos(2.0 * jnp.pi * x_values) + 1.0) / 2.0
+    return left_half * r2 * cosine_term**pmin + (~left_half) * r1 * cosine_term**pmax
+
+
+def _evaluate_branch_crossing_fixed(branch, phi_values, descriptor):
+    level = descriptor["level"]
+    mode = descriptor["mode"]
+    if mode == "constant":
+        return jnp.asarray(descriptor["phi1"]), jnp.asarray(descriptor["phi2"])
+
+    def _phi_from_segment(index):
+        delta_y = branch[index] - branch[index + 1]
+        delta_x = phi_values[index] - phi_values[index + 1]
+        slope = delta_y / delta_x
+        intercept = branch[index] - slope * phi_values[index]
+        return jnp.where(slope != 0.0, (level - intercept) / slope, phi_values[index])
+
+    if mode == "single-segment":
+        phi_hit = _phi_from_segment(descriptor["index"])
+        return phi_hit, phi_hit
+
+    phi_1 = _phi_from_segment(descriptor["index_1"])
+    phi_2 = _phi_from_segment(descriptor["index_2"])
+    return phi_1, phi_2
+
+
+def _repair_shifted_qi_branches_fixed(left_branch, right_branch, data):
+    left = left_branch
+    right = right_branch
+    count = left.shape[0]
+    for index in range(count - 1):
+        if data["left_fixes"][index]:
+            right = right.at[-index - 2].set(right[-index - 2] + (left[index] - left[index + 1] + 1e-12))
+            left = left.at[index + 1].set(left[index] + 1e-12)
+        if data["right_fixes"][index]:
+            left = left.at[index + 1].set(left[index + 1] + (right[-index - 1] - right[-index - 2] - 1e-12))
+            right = right.at[-index - 2].set(right[-index - 1] - 1e-12)
+    return left, right
+
+
+def _enforce_strictly_increasing_fixed(values, data):
+    adjusted = values
+    if adjusted.shape[0] == 0:
+        return adjusted
+    if data["reset_first"]:
+        adjusted = adjusted.at[0].set(0.0)
+    spacing = data["spacing"]
+    for index, fix in enumerate(data["fix_flags"], start=1):
+        if fix:
+            adjusted = adjusted.at[index].set(adjusted[index - 1] + spacing)
+    return adjusted
+
+
+def _evaluate_piecewise_linear_fixed(x_nodes, y_nodes, x_query, interval_indices):
+    if x_nodes.shape[0] <= 1:
+        return jnp.full(x_query.shape, y_nodes[0] if y_nodes.shape[0] else 0.0)
+    indices = jnp.asarray(interval_indices)
+    x0 = x_nodes[indices]
+    x1 = x_nodes[indices + 1]
+    y0 = y_nodes[indices]
+    y1 = y_nodes[indices + 1]
+    denom = x1 - x0
+    t = jnp.where(denom != 0.0, (x_query - x0) / denom, 0.0)
+    return y0 + t * (y1 - y0)
+
+
+def _normalize_modB_global_fixed(values, data):
+    flat = values.reshape((-1,))
+    minimum = flat[data["minimum_index"]]
+    scale = jnp.maximum(flat[data["maximum_index"]] - minimum, data["epsilon"])
+    return (values - minimum) / scale
+
+
+def _build_template_well_fixed(branch_values, data, phi_values):
+    index_minimum = data["index_minimum"]
+    left_branch = branch_values[:index_minimum + 1]
+    right_branch = branch_values[index_minimum:]
+    left_sources = jnp.asarray(data["left_sources"])
+    right_sources = jnp.asarray(data["right_sources"])
+
+    left_squashed = left_branch[left_sources]
+    right_squashed = right_branch[right_sources]
+    left_phi = phi_values[:index_minimum + 1]
+    right_phi = phi_values[index_minimum:]
+
+    left_values = left_squashed + _stretch_left_branch_jax(left_phi, left_squashed)
+    right_values = right_squashed + _stretch_right_branch_jax(right_phi, right_squashed)
+    template_values = jnp.concatenate((left_values[:-1], right_values))
+
+    error_sq = (branch_values - template_values) ** 2
+    integral = jnp.sum(0.5 * (error_sq[1:] + error_sq[:-1]) * (phi_values[1:] - phi_values[:-1]))
+    weight_raw = (phi_values[-1] - phi_values[0]) / jnp.maximum(integral, 1e-15)
+
+    bounce_distances = []
+    branch_locations = []
+    for descriptor in data["crossings"]:
+        phi_1, phi_2 = _evaluate_branch_crossing_fixed(template_values, phi_values, descriptor)
+        bounce_distances.append(phi_2 - phi_1)
+        branch_locations.append((phi_1, phi_2))
+
+    bounce_distances = jnp.stack(bounce_distances)
+    branch_locations = jnp.asarray(branch_locations)
+    left_locations = branch_locations[:, 0][::-1]
+    right_locations = branch_locations[:, 1]
+    return template_values, weight_raw, bounce_distances, jnp.concatenate((left_locations, right_locations[1:]))
+
+
+def _build_qi_objective_linearization(modB_lines, phi_values, nBj, nphi_out):
+    phi_values = np.asarray(phi_values, dtype=float)
+    modB_lines = np.asarray(modB_lines, dtype=float)
+    bounce_levels = np.linspace(0.0, 1.0, nBj)
+    phi_out = np.linspace(phi_values[0], phi_values[-1], nphi_out)
+    normalized, _, _, _ = _normalize_modB_global(modB_lines)
+    flat = modB_lines.reshape((-1,))
+
+    data = {
+        "bounce_levels": bounce_levels,
+        "phi_values": phi_values,
+        "phi_out": phi_out,
+        "nalpha": normalized.shape[1],
+        "nphi_out": nphi_out,
+        "epsilon": 1e-15,
+        "minimum_index": int(np.argmin(flat)),
+        "maximum_index": int(np.argmax(flat)),
+        "original_interp_indices": _build_piecewise_linear_interval_indices(phi_values, phi_out),
+        "alpha_data": [],
+    }
+
+    raw_weights = []
+    bounce_distances = []
+    branch_locations = []
+    for index in range(normalized.shape[1]):
+        branch = normalized[:, index]
+        index_minimum = int(np.argmin(branch))
+        template_values, weight_raw, current_bounce, current_locations = _build_template_well(phi_values, branch, bounce_levels)
+        alpha_data = {
+            "index_minimum": index_minimum,
+            "left_sources": _squash_left_branch_sources(branch[:index_minimum + 1]),
+            "right_sources": _squash_right_branch_sources(branch[index_minimum:]),
+            "crossings": [
+                _build_branch_crossing_descriptor(phi_values, template_values, level, 1.0, 0.0)
+                for level in bounce_levels
+            ],
+        }
+        data["alpha_data"].append(alpha_data)
+        raw_weights.append(weight_raw)
+        bounce_distances.append(current_bounce)
+        branch_locations.append(current_locations)
+
+    raw_weights = np.asarray(raw_weights)
+    bounce_distances = np.asarray(bounce_distances)
+    branch_locations = np.asarray(branch_locations)
+    normalized_weights = raw_weights / np.sum(raw_weights)
+    mean_bounce = np.sum(bounce_distances * normalized_weights[:, None], axis=0)
+    target_levels = np.concatenate((np.flip(bounce_levels), bounce_levels[1:]))
+
+    for index, alpha_data in enumerate(data["alpha_data"]):
+        bounce_delta = (bounce_distances[index, :] - mean_bounce) / 2.0
+        left_branch = branch_locations[index, :bounce_levels.size] + np.flip(bounce_delta)
+        right_branch = branch_locations[index, bounce_levels.size - 1:] - bounce_delta
+        repair_data = _build_shift_repair_linearization(left_branch, right_branch)
+        left_branch, right_branch = _repair_shifted_qi_branches(left_branch, right_branch)
+        shifted_locations = np.concatenate((left_branch, right_branch[1:]))
+        increasing_data = _build_strictly_increasing_linearization(shifted_locations)
+        shifted_locations = _enforce_strictly_increasing(shifted_locations)
+        alpha_data["repair_data"] = repair_data
+        alpha_data["increasing_data"] = increasing_data
+        alpha_data["target_interval_indices"] = _build_piecewise_linear_interval_indices(shifted_locations, phi_out)
+        alpha_data["target_levels"] = target_levels
+
+    return data
+
+
+def _qi_objective_from_raw_lines_fixed(raw_lines, data):
+    phi_values = jnp.asarray(data["phi_values"])
+    phi_out = jnp.asarray(data["phi_out"])
+    bounce_levels = jnp.asarray(data["bounce_levels"])
+    normalized = _normalize_modB_global_fixed(raw_lines, data)
+
+    raw_weights = []
+    bounce_distances = []
+    branch_locations = []
+    for index, alpha_data in enumerate(data["alpha_data"]):
+        branch = normalized[:, index]
+        _, weight_raw, current_bounce, current_locations = _build_template_well_fixed(branch, alpha_data, phi_values)
+        raw_weights.append(weight_raw)
+        bounce_distances.append(current_bounce)
+        branch_locations.append(current_locations)
+
+    raw_weights = jnp.stack(raw_weights)
+    bounce_distances = jnp.stack(bounce_distances)
+    branch_locations = jnp.stack(branch_locations)
+    normalized_weights = raw_weights / jnp.sum(raw_weights)
+    mean_bounce = jnp.sum(bounce_distances * normalized_weights[:, None], axis=0)
+    target_levels = jnp.asarray(data["alpha_data"][0]["target_levels"])
+
+    residuals = []
+    normalization = jnp.sqrt(data["nalpha"] * data["nphi_out"])
+    for index, alpha_data in enumerate(data["alpha_data"]):
+        branch = normalized[:, index]
+        bounce_delta = (bounce_distances[index, :] - mean_bounce) / 2.0
+        left_branch = branch_locations[index, :bounce_levels.shape[0]] + jnp.flip(bounce_delta)
+        right_branch = branch_locations[index, bounce_levels.shape[0] - 1:] - bounce_delta
+        left_branch, right_branch = _repair_shifted_qi_branches_fixed(left_branch, right_branch, alpha_data["repair_data"])
+        shifted_locations = jnp.concatenate((left_branch, right_branch[1:]))
+        shifted_locations = _enforce_strictly_increasing_fixed(shifted_locations, alpha_data["increasing_data"])
+        target_values = _evaluate_piecewise_linear_fixed(
+            shifted_locations,
+            target_levels,
+            phi_out,
+            alpha_data["target_interval_indices"],
+        )
+        original_values = _evaluate_piecewise_linear_fixed(
+            phi_values,
+            branch,
+            phi_out,
+            data["original_interp_indices"],
+        )
+        residuals.append((target_values - original_values) / normalization)
+
+    residual = jnp.concatenate(residuals)
+    return jnp.dot(residual, residual)
+
+
+def _qi_objective_and_gradient_from_raw_lines(modB_lines, phi_values, nBj, nphi_out):
+    data = _build_qi_objective_linearization(modB_lines, phi_values, nBj, nphi_out)
+    objective = lambda values: _qi_objective_from_raw_lines_fixed(values, data)
+    value, gradient = value_and_grad(objective)(jnp.asarray(modB_lines, dtype=jnp.float64))
+    return float(value), np.asarray(gradient, dtype=float)
+
+
+def _build_boozer_line_sampling_linearization(surface, phi_values, alpha_values, iota, phi_shift):
+    field_period_normalized = 1.0 / surface.nfp
+    phi_normalized = np.mod(phi_values / (2 * np.pi), field_period_normalized)
+    nphi_grid = surface.quadpoints_phi.size
+    ntheta_grid = surface.quadpoints_theta.size
+    dphi = field_period_normalized / nphi_grid
+    dtheta = 1.0 / ntheta_grid
+
+    theta_physical = alpha_values[None, :] + iota * (phi_values[:, None] - phi_shift)
+    theta_normalized = np.mod(theta_physical / (2 * np.pi), 1.0)
+
+    phi_index = np.broadcast_to(
+        np.mod(phi_normalized[:, None] / dphi, nphi_grid),
+        theta_normalized.shape,
+    )
+    theta_index = np.mod(theta_normalized / dtheta, ntheta_grid)
+
+    phi_index_0 = np.floor(phi_index).astype(int)
+    theta_index_0 = np.floor(theta_index).astype(int)
+    phi_index_1 = (phi_index_0 + 1) % nphi_grid
+    theta_index_1 = (theta_index_0 + 1) % ntheta_grid
+    phi_weight = phi_index - phi_index_0
+    theta_weight = theta_index - theta_index_0
+
+    return {
+        "phi_index_0": phi_index_0,
+        "phi_index_1": phi_index_1,
+        "theta_index_0": theta_index_0,
+        "theta_index_1": theta_index_1,
+        "phi_weight": phi_weight,
+        "theta_weight": theta_weight,
+        "dtheta": dtheta,
+        "dtheta_diota": np.broadcast_to(
+            (phi_values[:, None] - phi_shift) / (2 * np.pi),
+            theta_normalized.shape,
+        ),
+    }
+
+
+def _pullback_boozer_line_sampling(sample_gradient, modB_grid, sampling_data):
+    grad_grid = np.zeros_like(modB_grid)
+    grad_iota = 0.0
+
+    phi_index_0 = sampling_data["phi_index_0"]
+    phi_index_1 = sampling_data["phi_index_1"]
+    theta_index_0 = sampling_data["theta_index_0"]
+    theta_index_1 = sampling_data["theta_index_1"]
+    phi_weight = sampling_data["phi_weight"]
+    theta_weight = sampling_data["theta_weight"]
+
+    for row in range(sample_gradient.shape[0]):
+        for column in range(sample_gradient.shape[1]):
+            gradient = sample_gradient[row, column]
+            i0 = phi_index_0[row, column]
+            i1 = phi_index_1[row, column]
+            j0 = theta_index_0[row, column]
+            j1 = theta_index_1[row, column]
+            wp = phi_weight[row, column]
+            wt = theta_weight[row, column]
+
+            w00 = (1 - wp) * (1 - wt)
+            w01 = (1 - wp) * wt
+            w10 = wp * (1 - wt)
+            w11 = wp * wt
+
+            grad_grid[i0, j0] += gradient * w00
+            grad_grid[i0, j1] += gradient * w01
+            grad_grid[i1, j0] += gradient * w10
+            grad_grid[i1, j1] += gradient * w11
+
+            val00 = modB_grid[i0, j0]
+            val01 = modB_grid[i0, j1]
+            val10 = modB_grid[i1, j0]
+            val11 = modB_grid[i1, j1]
+            dsample_dtheta = ((1 - wp) * (val01 - val00) + wp * (val11 - val10)) / sampling_data["dtheta"]
+            grad_iota += gradient * dsample_dtheta * sampling_data["dtheta_diota"][row, column]
+
+    return grad_grid, float(grad_iota)
+
+
 def _qi_objective_single_surface(target_values, source_values, nalpha, nphi_out):
     target_values = np.asarray(target_values, dtype=float)
     source_values = np.asarray(source_values, dtype=float)
@@ -1136,13 +1640,21 @@ def _make_shuffled_target_values(phi_values, branch_values, bounce_levels, branc
 
     shifted_locations = np.concatenate((left_branch, right_branch[1:]))
     target_levels = np.concatenate((np.flip(bounce_levels), bounce_levels[1:]))
-    try:
-        spline = UnivariateSpline(shifted_locations, target_levels, k=1, s=0)
-    except Exception:
-        left_branch, right_branch = _repair_shifted_qi_branches(left_branch, right_branch)
-        shifted_locations = np.concatenate((left_branch, right_branch[1:]))
-        spline = UnivariateSpline(shifted_locations, target_levels, k=1, s=0)
+    shifted_locations = _enforce_strictly_increasing(shifted_locations)
+    spline = UnivariateSpline(shifted_locations, target_levels, k=1, s=0)
     return spline(phi_values)
+
+
+def _get_boozer_linearization(booz_surf):
+    res = booz_surf.res
+    if not res.get('success', True):
+        raise RuntimeError("Boozer surface solve failed during objective evaluation.")
+    if 'PLU' not in res or 'vjp' not in res:
+        raise RuntimeError("Boozer surface solve did not provide derivative metadata.")
+    iota = res['iota']
+    G = res['G']
+    P, L, U = res['PLU']
+    return iota, G, P, L, U, res['vjp']
 
 
 def _qi_residual_vector_single_surface(modB_lines, phi_values, nBj, nphi_out):
@@ -1183,7 +1695,7 @@ class NonQuasiIsodynamicRatio(Optimizable):
     def __init__(self, boozer_surface, bs, sDIM=20, nphi=151, nalpha=31, nBj=51, nphi_out=2000, phi_shift=None, smoothing=None):
         assert type(boozer_surface.surface) is SurfaceXYZTensorFourier
 
-        Optimizable.__init__(self, depends_on=[boozer_surface])
+        Optimizable.__init__(self, depends_on=[boozer_surface, bs])
         self.boozer_surface = boozer_surface
         self.in_surface = boozer_surface.surface
         self.surface = _make_qi_aux_surface(self.in_surface, sDIM)
@@ -1194,8 +1706,6 @@ class NonQuasiIsodynamicRatio(Optimizable):
         self.nphi_out = nphi_out
         self.phi_shift = phi_shift
         self.smoothing = smoothing
-        self.fd_rel_step = 1e-6
-        self.fd_abs_step = 1e-8
         self.recompute_bell()
 
     def recompute_bell(self, parent=None):
@@ -1207,24 +1717,41 @@ class NonQuasiIsodynamicRatio(Optimizable):
             self.compute()
         return self._J
 
+    def residuals(self):
+        return self._residual_vector_from_current_state()
+
     @derivative_dec
     def dJ(self):
         if self._dJ is None:
-            if self._J is None:
-                self._J = self._objective_value_from_current_state()
-            self._dJ = self._finite_difference_gradient()
-        return Derivative({self.biotsavart: self._dJ})
+            self.compute()
+        return self._dJ
 
     def _ensure_current_boozer_surface(self):
         if self.boozer_surface.need_to_run_code:
             res = self.boozer_surface.res
-            self.boozer_surface.run_code(res['iota'], G=res['G'])
+            try:
+                self.boozer_surface.run_code(res['iota'], G=res['G'])
+            except np.linalg.LinAlgError:
+                self.boozer_surface.res['success'] = False
+                return False
         return self.boozer_surface.res.get('success', True)
 
     def _objective_value_from_current_state(self):
+        try:
+            residual = self._residual_vector_from_current_state()
+        except RuntimeError:
+            return 1e6
+        return float(np.dot(residual, residual))
+
+    def _resolve_phi_shift(self, modB):
+        if self.phi_shift is not None:
+            return float(self.phi_shift)
+        return float(2 * np.pi * self.surface.quadpoints_phi[np.argmax(np.max(modB, axis=1))])
+
+    def _residual_vector_from_current_state(self):
         success = self._ensure_current_boozer_surface()
         if not success:
-            return 1e6
+            raise RuntimeError("Boozer surface solve failed while evaluating the QI residual.")
 
         self.surface.set_dofs(self.in_surface.get_dofs())
         self.biotsavart.set_points(self.surface.gamma().reshape((-1, 3)))
@@ -1240,38 +1767,57 @@ class NonQuasiIsodynamicRatio(Optimizable):
         phi_values, alpha_values = _make_qi_sampling_grid(self.surface, self.nphi, self.nalpha, phi_shift)
         modB_lines = _sample_modB_on_boozer_lines(modB, self.surface, phi_values, alpha_values,
                                                   self.boozer_surface.res['iota'], phi_shift)
-        residual = _qi_residual_vector_single_surface(modB_lines, phi_values, self.nBj, self.nphi_out)
-        return float(np.dot(residual, residual))
-
-    def _finite_difference_gradient(self):
-        base_x = self.biotsavart.x.copy()
-        gradient = np.zeros_like(base_x)
-
-        for index in range(base_x.size):
-            step = self.fd_abs_step + self.fd_rel_step * max(1.0, abs(base_x[index]))
-
-            x_plus = base_x.copy()
-            x_plus[index] += step
-            self.biotsavart.x = x_plus
-            self.boozer_surface.need_to_run_code = True
-            j_plus = self._objective_value_from_current_state()
-
-            x_minus = base_x.copy()
-            x_minus[index] -= step
-            self.biotsavart.x = x_minus
-            self.boozer_surface.need_to_run_code = True
-            j_minus = self._objective_value_from_current_state()
-
-            gradient[index] = (j_plus - j_minus) / (2 * step)
-
-        self.biotsavart.x = base_x
-        self.boozer_surface.need_to_run_code = True
-        self._J = self._objective_value_from_current_state()
-        return gradient
+        return _qi_residual_vector_single_surface(modB_lines, phi_values, self.nBj, self.nphi_out)
 
     def compute(self):
-        self._J = self._objective_value_from_current_state()
-        self._dJ = None
+        success = self._ensure_current_boozer_surface()
+        if not success:
+            self._J = 1e6
+            self._dJ = Derivative({})
+            return
+
+        self.surface.set_dofs(self.in_surface.get_dofs())
+        surface_points = self.surface.gamma().reshape((-1, 3))
+        self.biotsavart.set_points(surface_points)
+        self.biotsavart.compute(1)
+
+        nphi_aux = self.surface.quadpoints_phi.size
+        ntheta_aux = self.surface.quadpoints_theta.size
+        B = self.biotsavart.B().reshape((nphi_aux, ntheta_aux, 3))
+        modB = np.sqrt(np.sum(B**2, axis=2))
+        modB_safe = np.maximum(modB, 1e-15)
+
+        phi_shift = self._resolve_phi_shift(modB)
+        phi_values, alpha_values = _make_qi_sampling_grid(self.surface, self.nphi, self.nalpha, phi_shift)
+        iota = self.boozer_surface.res['iota']
+        G = self.boozer_surface.res['G']
+        modB_lines = _sample_modB_on_boozer_lines(modB, self.surface, phi_values, alpha_values, iota, phi_shift)
+
+        self._J, dJ_dmodB_lines = _qi_objective_and_gradient_from_raw_lines(modB_lines, phi_values, self.nBj, self.nphi_out)
+
+        sampling_data = _build_boozer_line_sampling_linearization(self.surface, phi_values, alpha_values, iota, phi_shift)
+        dJ_dmodB_grid, dJ_diota = _pullback_boozer_line_sampling(dJ_dmodB_lines, modB, sampling_data)
+
+        dJ_dB = dJ_dmodB_grid[:, :, None] * B / modB_safe[:, :, None]
+        dJ_by_dcoils = self.biotsavart.B_vjp(dJ_dB.reshape((-1, 3)))
+
+        dB_by_dX = self.biotsavart.dB_by_dX().reshape((nphi_aux, ntheta_aux, 3, 3))
+        dJ_dX = np.einsum('ijb,ijbc->ijc', dJ_dB, dB_by_dX, optimize=True)
+        dJ_dsurface = self.surface.dgamma_by_dcoeff_vjp(dJ_dX)
+
+        booz_surf = self.boozer_surface
+        iota, G, P, L, U, dconstraint_dcoils_vjp = _get_boozer_linearization(booz_surf)
+        dJ_ds = np.zeros(L.shape[0])
+        dJ_dsurface = np.asarray(dJ_dsurface, dtype=float)
+        dJ_ds[:dJ_dsurface.size] = dJ_dsurface
+        if G is not None:
+            dJ_ds[-2] = dJ_diota
+        else:
+            dJ_ds[-1] = dJ_diota
+
+        adj = forward_backward(P, L, U, dJ_ds)
+        adj_times_dg_dcoil = dconstraint_dcoils_vjp(adj, booz_surf, iota, G)
+        self._dJ = dJ_by_dcoils - adj_times_dg_dcoil
 
 
 class Iotas(Optimizable):
@@ -1311,10 +1857,7 @@ class Iotas(Optimizable):
         self._J = self.boozer_surface.res['iota']
 
         booz_surf = self.boozer_surface
-        iota = booz_surf.res['iota']
-        G = booz_surf.res['G']
-        P, L, U = booz_surf.res['PLU']
-        dconstraint_dcoils_vjp = self.boozer_surface.res['vjp']
+        iota, G, P, L, U, dconstraint_dcoils_vjp = _get_boozer_linearization(booz_surf)
 
         dJ_ds = np.zeros(L.shape[0])
         if G is not None:
@@ -1406,8 +1949,7 @@ class BoozerResidual(Optimizable):
         self._J = 0.5*np.sum(rtil**2)
 
         booz_surf = self.boozer_surface
-        P, L, U = booz_surf.res['PLU']
-        dconstraint_dcoils_vjp = booz_surf.res['vjp']
+        iota, G, P, L, U, dconstraint_dcoils_vjp = _get_boozer_linearization(booz_surf)
 
         dJ_by_dB = self.dJ_by_dB()
         dJ_by_dcoils = self.biotsavart.B_vjp(dJ_by_dB)

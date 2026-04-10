@@ -28,38 +28,43 @@ from scipy.optimize import minimize
 from simsopt.field import BiotSavart, Current, coils_via_symmetries
 from simsopt.geo import (SurfaceRZFourier, curves_to_vtk, create_equally_spaced_curves,
                          CurveLength, CurveCurveDistance, MeanSquaredCurvature,
-                         LpCurveCurvature, CurveSurfaceDistance)
+                         LpCurveCurvature, CurveSurfaceDistance, LinkingNumber)
+from simsopt.geo.curveobjectives import ArclengthVariation
 from simsopt.objectives import Weight, SquaredFlux, QuadraticPenalty
 from simsopt.util import in_github_actions
 
 # Number of unique coil shapes, i.e. the number of coils per half field period:
 # (Since the configuration has nfp = 2, multiply by 4 to get the total number of coils.)
-ncoils = 4
+ncoils = 5
 
 # Major radius for the initial circular coils:
 R0 = 1.0
 
 # Minor radius for the initial circular coils:
-R1 = 0.5
+R1 = 0.91
 
 # Number of Fourier modes describing each Cartesian component of each coil:
-order = 5
+order = 12
+
+# Weight for the arclength variation penalty in the objective function:
+ARCLENGTH_WEIGHT = 1e-2
 
 # Weight on the curve lengths in the objective function. We use the `Weight`
 # class here to later easily adjust the scalar value and rerun the optimization
 # without having to rebuild the objective.
-LENGTH_WEIGHT = Weight(1e-6)
+LENGTH_WEIGHT = Weight(1e-3)
+LENGHT_THRESHOLD = 5.5
 
 # Threshold and weight for the coil-to-coil distance penalty in the objective function:
 CC_THRESHOLD = 0.1
 CC_WEIGHT = 1000
 
 # Threshold and weight for the coil-to-surface distance penalty in the objective function:
-CS_THRESHOLD = 0.3
-CS_WEIGHT = 10
+CS_THRESHOLD = 0.16
+CS_WEIGHT = 1000
 
 # Threshold and weight for the curvature penalty in the objective function:
-CURVATURE_THRESHOLD = 5.
+CURVATURE_THRESHOLD = 5
 CURVATURE_WEIGHT = 1e-6
 
 # Threshold and weight for the mean squared curvature penalty in the objective function:
@@ -71,7 +76,8 @@ MAXITER = 50 if in_github_actions else 400
 
 # File for the desired boundary magnetic surface:
 TEST_DIR = (Path(__file__).parent / ".." / ".." / "tests" / "test_files").resolve()
-filename = TEST_DIR / 'input.LandremanPaul2021_QA'
+INPUT_DIR = 'inputs'
+filename = INPUT_DIR + '/input.nfp2_QI'
 
 # Directory for output
 OUT_DIR = "./output/"
@@ -82,8 +88,8 @@ os.makedirs(OUT_DIR, exist_ok=True)
 #######################################################
 
 # Initialize the boundary magnetic surface:
-nphi = 32
-ntheta = 32
+nphi = 42
+ntheta = 52
 s = SurfaceRZFourier.from_vmec_input(filename, range="half period", nphi=nphi, ntheta=ntheta)
 
 # Create the initial coils:
@@ -110,17 +116,20 @@ Jccdist = CurveCurveDistance(curves, CC_THRESHOLD, num_basecurves=ncoils)
 Jcsdist = CurveSurfaceDistance(curves, s, CS_THRESHOLD)
 Jcs = [LpCurveCurvature(c, 2, CURVATURE_THRESHOLD) for c in base_curves]
 Jmscs = [MeanSquaredCurvature(c) for c in base_curves]
-
+Jals = [ArclengthVariation(c) for c in base_curves]
+Jlink = LinkingNumber(curves)
 
 # Form the total objective function. To do this, we can exploit the
 # fact that Optimizable objects with J() and dJ() functions can be
 # multiplied by scalars and added:
 JF = Jf \
-    + LENGTH_WEIGHT * sum(Jls) \
+    + LENGTH_WEIGHT * sum([QuadraticPenalty(Jls, LENGHT_THRESHOLD) for Jls in Jls]) \
     + CC_WEIGHT * Jccdist \
-    + CS_WEIGHT * Jcsdist \
     + CURVATURE_WEIGHT * sum(Jcs) \
-    + MSC_WEIGHT * sum(QuadraticPenalty(J, MSC_THRESHOLD, "max") for J in Jmscs)
+    + MSC_WEIGHT * sum(QuadraticPenalty(J, MSC_THRESHOLD, "max") for J in Jmscs) \
+    + ARCLENGTH_WEIGHT * sum(Jals) \
+    + CS_WEIGHT * Jcsdist \
+    + Jlink
 
 # We don't have a general interface in SIMSOPT for optimisation problems that
 # are not in least-squares form, so we write a little wrapper function that we

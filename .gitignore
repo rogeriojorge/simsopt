@@ -54,6 +54,9 @@ spec*.sp.h5
 # examples
 examples/VMEC/
 examples/*.log
+examples/2_Intermediate/output/
+examples/2_Intermediate/boozerQI_debug/output/
+examples/2_Intermediate/boozerQI_debug/__pycache__/
 
 # Sphinx related files
 docs/build/
