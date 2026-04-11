@@ -474,7 +474,6 @@ class BoozerQIExampleTests(unittest.TestCase):
         )
 
     def test_boozer_qi_example_reduced_runtime(self):
-        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
         env = os.environ.copy()
         env.update({
             "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
@@ -499,7 +498,6 @@ class BoozerQIExampleTests(unittest.TestCase):
         self.assertIn("Optimization success=", result.stdout)
 
     def test_boozer_qi_example_fd_comparison(self):
-        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
         env = os.environ.copy()
         env.update({
             "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
@@ -529,7 +527,6 @@ class BoozerQIExampleTests(unittest.TestCase):
         self.assertLess(fd_error, 1.0e-4)
 
     def test_boozer_qi_example_reduced_progress(self):
-        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
         env = os.environ.copy()
         env.update({
             "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
@@ -556,7 +553,6 @@ class BoozerQIExampleTests(unittest.TestCase):
         self.assertLess(history["result"]["best_J"], history["result"]["initial_J"])
 
     def test_boozer_qi_example_optimizer_comparison(self):
-        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
         env = os.environ.copy()
         env.update({
             "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
@@ -589,7 +585,6 @@ class BoozerQIExampleTests(unittest.TestCase):
         self.assertTrue(all("fun" in entry for entry in history["optimizer_comparison"]["results"]))
 
     def test_boozer_qi_example_exact_report(self):
-        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
         env = os.environ.copy()
         env.update({
             "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",
@@ -621,7 +616,6 @@ class BoozerQIExampleTests(unittest.TestCase):
         self.assertIn("total_J", history["exact_report"])
 
     def test_boozer_qi_example_exports_vmec_and_coils(self):
-        repo_root = "/Users/rogerio/local/simsopt_boozer_QI"
         env = os.environ.copy()
         env.update({
             "SIMSOPT_BOOZER_QI_WRITE_VTK": "0",

@@ -28,7 +28,6 @@ from simsopt.geo import (
     Iotas,
     MajorRadius,
     NonQuasiIsodynamicRatio,
-    SurfaceXYZTensorFourier,
     Volume,
     boozer_surface_residual,
     curves_to_vtk,
