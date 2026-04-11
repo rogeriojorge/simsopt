@@ -133,6 +133,20 @@ An example reduced-runtime invocation is::
    python examples/2_Intermediate/boozerQI.py
 
 
+Dependencies for reproducible runs
+----------------------------------
+
+For parity with CI and for stable local development around this example:
+
+- Use a Python environment that includes the optional simsopt extras needed for examples and docs.
+- Ensure the VMEC Python extension comes from a build compatible with your local MPI/compiler toolchain.
+- Install ``qsc`` for examples/tests that import ``Qsc`` directly.
+
+In CI these dependencies are installed explicitly before tests/examples are run.
+If your local environment differs (especially VMEC wrapper builds), VMEC-dependent
+tests can fail before reaching the QI objective path.
+
+
 Current limitations
 -------------------
 

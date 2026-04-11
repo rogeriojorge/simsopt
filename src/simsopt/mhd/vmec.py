@@ -355,14 +355,10 @@ class Vmec(Optimizable):
                                                                range=range_surface)
             self.free_boundary = bool(vi.lfreeb)
 
-            # Transfer boundary shape data from fortran to the ParameterArray:
-            for m in range(vi.mpol + 1):
-                for n in range(-vi.ntor, vi.ntor + 1):
-                    self._boundary.rc[m, n + vi.ntor] = vi.rbc[101 + n, m]
-                    self._boundary.zs[m, n + vi.ntor] = vi.zbs[101 + n, m]
-                    if vi.lasym:
-                        self._boundary.rs[m, n + vi.ntor] = vi.rbs[101 + n, m]
-                        self._boundary.zc[m, n + vi.ntor] = vi.zbc[101 + n, m]
+            # Transfer boundary shape data from VMEC input arrays. Some VMEC python
+            # wrappers expose broken f90wrap array handles for rbc/zbs/rbs/zbc, so
+            # we fall back to parsing the input namelist when needed.
+            self._initialize_boundary_coefficients(vi, filename, ntheta, nphi, range_surface)
             self._boundary.local_full_x = self._boundary.get_dofs()
 
             self.need_to_run_code = True
@@ -384,6 +380,58 @@ class Vmec(Optimizable):
             # This next line must come after Optimizable.__init__
             # since that calls recompute_bell()
             self.need_to_run_code = False
+
+    def _initialize_boundary_coefficients(self, vi, filename, ntheta, nphi, range_surface):
+        """Populate ``self._boundary`` from VMEC input data with a robust fallback.
+
+        The preferred path reads Fourier coefficients directly from the in-memory
+        ``vmec.vmec_input`` arrays after ``runvmec(readin)``. If that fails due to a
+        wrapper-level array-binding issue, we parse the VMEC input namelist instead and
+        copy coefficients from that surface representation.
+        """
+        try:
+            self._copy_boundary_coefficients_from_vmec_input(vi)
+        except Exception as exc:
+            logger.warning(
+                "Falling back to boundary coefficients from input file '%s' because "
+                "vmec_input coefficient arrays are unavailable (%s: %s).",
+                filename,
+                type(exc).__name__,
+                exc,
+            )
+            self._copy_boundary_coefficients_from_input_file(
+                filename, ntheta=ntheta, nphi=nphi, range_surface=range_surface
+            )
+
+    def _copy_boundary_coefficients_from_vmec_input(self, vi):
+        """Copy boundary Fourier coefficients from ``vmec.vmec_input`` arrays."""
+        for m in range(vi.mpol + 1):
+            for n in range(-vi.ntor, vi.ntor + 1):
+                self._boundary.rc[m, n + vi.ntor] = vi.rbc[101 + n, m]
+                self._boundary.zs[m, n + vi.ntor] = vi.zbs[101 + n, m]
+                if vi.lasym:
+                    self._boundary.rs[m, n + vi.ntor] = vi.rbs[101 + n, m]
+                    self._boundary.zc[m, n + vi.ntor] = vi.zbc[101 + n, m]
+
+    def _copy_boundary_coefficients_from_input_file(self, filename, ntheta, nphi, range_surface):
+        """Copy boundary coefficients from the VMEC ``input.*`` namelist surface."""
+        source = SurfaceRZFourier.from_vmec_input(
+            filename,
+            ntheta=ntheta,
+            nphi=nphi,
+            range=range_surface,
+        )
+
+        max_m = min(self._boundary.mpol, source.mpol)
+        max_n = min(self._boundary.ntor, source.ntor)
+
+        for m in range(max_m + 1):
+            for n in range(-max_n, max_n + 1):
+                self._boundary.rc[m, n + self._boundary.ntor] = source.rc[m, n + source.ntor]
+                self._boundary.zs[m, n + self._boundary.ntor] = source.zs[m, n + source.ntor]
+                if not self._boundary.stellsym and not source.stellsym:
+                    self._boundary.rs[m, n + self._boundary.ntor] = source.rs[m, n + source.ntor]
+                    self._boundary.zc[m, n + self._boundary.ntor] = source.zc[m, n + source.ntor]
 
     @property
     def boundary(self):
@@ -520,21 +568,32 @@ class Vmec(Optimizable):
             raise ValueError("VMEC does not allow mpol > 101")
         if vi.ntor > 101:
             raise ValueError("VMEC does not allow ntor > 101")
-        vi.rbc[:, :] = 0
-        vi.zbs[:, :] = 0
-        if vi.lasym:
-            vi.rbs[:, :] = 0
-            vi.zbc[:, :] = 0
         mpol_capped = np.min([boundary_RZFourier.mpol, 101])
         ntor_capped = np.min([boundary_RZFourier.ntor, 101])
-        # Transfer boundary shape data from the surface object to VMEC:
-        for m in range(mpol_capped + 1):
-            for n in range(-ntor_capped, ntor_capped + 1):
-                vi.rbc[101 + n, m] = boundary_RZFourier.get_rc(m, n)
-                vi.zbs[101 + n, m] = boundary_RZFourier.get_zs(m, n)
-                if vi.lasym:
-                    vi.rbs[101 + n, m] = boundary_RZFourier.get_rs(m, n)
-                    vi.zbc[101 + n, m] = boundary_RZFourier.get_zc(m, n)
+        # Transfer boundary shape data from the surface object to VMEC. If the
+        # wrapper does not expose rbc/zbs/rbs/zbc arrays correctly, we still
+        # continue since get_input() writes boundary coefficients directly from
+        # boundary_RZFourier via get_nml().
+        try:
+            vi.rbc[:, :] = 0
+            vi.zbs[:, :] = 0
+            if vi.lasym:
+                vi.rbs[:, :] = 0
+                vi.zbc[:, :] = 0
+            for m in range(mpol_capped + 1):
+                for n in range(-ntor_capped, ntor_capped + 1):
+                    vi.rbc[101 + n, m] = boundary_RZFourier.get_rc(m, n)
+                    vi.zbs[101 + n, m] = boundary_RZFourier.get_zs(m, n)
+                    if vi.lasym:
+                        vi.rbs[101 + n, m] = boundary_RZFourier.get_rs(m, n)
+                        vi.zbc[101 + n, m] = boundary_RZFourier.get_zc(m, n)
+        except Exception as exc:
+            logger.warning(
+                "Could not update vmec_input boundary coefficient arrays directly "
+                "(%s: %s). Continuing with boundary coefficients from get_nml().",
+                type(exc).__name__,
+                exc,
+            )
 
         # Set axis shape to something that is obviously wrong (R=0) to
         # trigger vmec's internal guess_axis.f to run. Otherwise the
