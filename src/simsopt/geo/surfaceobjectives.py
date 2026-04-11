@@ -1689,7 +1689,9 @@ class NonQuasiIsodynamicRatio(Optimizable):
 
     The current implementation ports the legacy single-surface well-shuffling residual
     to a BoozerSurface auxiliary grid and defines the scalar objective as the squared norm
-    of the normalized residual vector.
+    of the normalized residual vector. Derivatives are propagated through the Boozer-surface
+    solve using the linearized constraint system together with Biot-Savart vector-Jacobian
+    products, so coil gradients are computed without a finite-difference outer loop.
     """
 
     def __init__(self, boozer_surface, bs, sDIM=20, nphi=151, nalpha=31, nBj=51, nphi_out=2000, phi_shift=None, smoothing=None):

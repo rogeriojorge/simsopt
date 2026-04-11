@@ -140,7 +140,7 @@ This milestone-1 implementation is intentionally narrow:
 
 - It operates on a single Boozer surface in a coil-generated Biot-Savart field.
 - It does not use ``booz_xform`` or a VMEC quasisymmetry objective.
-- The current derivative of :obj:`~simsopt.geo.NonQuasiIsodynamicRatio` is a finite-difference coil gradient, which is suitable for smoke tests and experimentation but slower than an adjoint implementation.
+- :obj:`~simsopt.geo.NonQuasiIsodynamicRatio` differentiates through the Boozer-surface solve using the linearized constraint system together with Biot-Savart vector-Jacobian products, so the coil gradient is computed without a finite-difference outer loop.
 - The optional VMEC initializer is only a geometry initializer for the starting surface. The magnetic field still comes from the coils, so the VMEC configuration must have the same number of field periods as the coil set.
 
 These limitations keep the new objective close to the existing Boozer-surface
