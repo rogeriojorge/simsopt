@@ -625,3 +625,24 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
       for solve + jacobian);
     - that makes padded/bucketed replay traces the next high-value runtime
       target, not another wrapper cache change.
+  - Replay-bucketing pass on 2026-04-17:
+    - dynamic replay tapes are now bucketed to a stable padded scan length,
+      and the exact QH nearby-point audit now lands all of `x0/x1/x2` in the
+      same replay bucket length `800` instead of `786/792/794`;
+    - exact callback timings improved materially on the merged branch:
+      `x0` jacobian about `2.22 s`, `x1` about `6.60 s + 2.50 s`,
+      `x2` about `6.77 s + 2.37 s` for solve + jacobian;
+    - exact `max_mode=1`, `max_nfev=3` improved from about `52.33 s` to about
+      `37.49 s` at the same final total `0.2605232587894932`;
+    - exact `max_mode=1`, `max_nfev=10` did not improve enough yet:
+      final total stays about `0.2417460072833051` and the cold full run was
+      still about `159.98 s`;
+    - exact `max_mode=2`, `max_nfev=3` remains a shipping blocker: no
+      meaningful descent (`0.30024580360290376`) and about `69.31 s`.
+    - additional mode-2 audit:
+      - the exact local least-squares model at `x0` is not dead; a direct
+        dense least-squares step built from the exact `J` reduces the total
+        objective to about `0.1128` at `alpha=0.5`;
+      - switching SciPy to `x_scale = 1` cuts runtime (about `58.87 s` vs
+        `80.34 s` on the 3-eval probe) but still yields no descent, so
+        `x_scale` is not the root cause of the mode-2 failure.
