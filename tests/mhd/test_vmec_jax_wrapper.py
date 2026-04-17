@@ -424,6 +424,8 @@ def test_vmec_jax_discrete_backend_exposes_cached_state_payload():
     np.testing.assert_allclose(np.asarray(cached_residual), residual)
     assert payload is not None
     assert state is not None
+    assert vmec._cached_state is state
+    assert vmec._cached_x == vmec._x_cache_key(x0)
 
 
 def test_vmec_jax_solve_state_for_objective_uses_forward_residual_path():

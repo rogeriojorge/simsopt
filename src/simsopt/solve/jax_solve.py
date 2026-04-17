@@ -430,6 +430,7 @@ def build_vmec_objective_stage(
                 return_payload=True,
             )
             residual = np.asarray(residuals_from_state(state), dtype=float)
+            vmec._record_runtime_state(x_free, state, resume_state=payload.get("resume_state"))
             scipy_callback_cache["x_key"] = vmec._x_cache_key(x_free)
             scipy_callback_cache["state"] = state
             scipy_callback_cache["payload"] = payload

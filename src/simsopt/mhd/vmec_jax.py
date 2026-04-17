@@ -792,7 +792,10 @@ class VmecJax:
                 store_full_step_traces=False,
             )
             packed_final = jnp.asarray(tape.final_packed_state, dtype=x0.dtype)
-            return packed_final, {"tape": tape, "axis_override": axis_override}
+            return packed_final, {
+                "tape": tape,
+                "axis_override": axis_override,
+            }
 
         @jax.custom_jvp
         def _packed_state_from_xfree(xf):
@@ -824,6 +827,18 @@ class VmecJax:
 
         packed_state = _packed_state_from_xfree(jnp.asarray(x_free))
         return vj.unpack_state(packed_state, layout)
+
+    def _record_runtime_state(self, x_free, state, *, resume_state=None):
+        """Update stateful warm-start/runtime caches after a concrete solve."""
+        x_key = self._x_cache_key(x_free)
+        use_stateful_cache = x_key is not None and not self._stateless_evaluations
+        if not use_stateful_cache:
+            return
+        self._context.st_guess = state
+        self._cached_x = x_key
+        self._cached_state = state
+        self._cached_wout = None
+        self._cached_run = None
 
     def _discrete_adjoint_residual_jacobian(self, x_free, residuals_from_state, *, state=None, payload=None):
         self._ensure_context()
@@ -1134,13 +1149,7 @@ class VmecJax:
         # during traced/JAX-transformed solves, which would make subsequent
         # objective calls history-dependent and can leak traced values into the
         # Python wrapper state.
-        if use_stateful_cache:
-            self._context.st_guess = state
-        if use_stateful_cache:
-            self._cached_x = x_key
-            self._cached_state = state
-            self._cached_wout = None
-            self._cached_run = None
+        self._record_runtime_state(x_free, state)
         return state
 
     def get_run(self, x_free):

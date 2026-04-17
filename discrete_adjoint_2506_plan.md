@@ -597,5 +597,19 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
   - Next PR-facing step is no longer another derivative rewrite. It is a
     forward-path/runtime pass aimed at executable retention and exact residual
     solve cost, with the new comparison harness kept as the acceptance gate.
-  - Draft PR opened for the simsopt-side branch state:
-    https://github.com/hiddenSymmetries/simsopt/pull/621
+  - The draft simsopt PR (`hiddenSymmetries/simsopt#621`) has been closed
+    intentionally.
+  - Do not reopen any simsopt PR until the exact JAX QH benchmark is
+    competitive with classic both in runtime and in final quasisymmetry.
+  - Wrapper audit on 2026-04-17:
+    - fixed a consistency gap so the exact SciPy residual/Jacobian callbacks
+      now update the normal `VmecJax` runtime cache/warm state after a
+      concrete solve;
+    - tested a nearby-point carry strategy through the exact callback path and
+      rejected it: the resumed exact callback pair regressed badly on the QH
+      mode-1 probe (`x1` about `15.23 s + 10.48 s`, `x2` about
+      `17.64 s + 6.54 s` for solve + jacobian) relative to the earlier stable
+      nearby-point regime;
+    - conclusion: the next runtime pass should stay solver-side
+      (forward exact solve / replay transport), not wrapper-side nearby-point
+      continuation.
