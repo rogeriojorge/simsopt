@@ -492,6 +492,8 @@ def least_squares_jax_solve(
     method: str = "scipy",
     max_nfev: int = 50,
     gtol: float = 1e-7,
+    ftol: float | None = None,
+    xtol: float | None = None,
     step_size: float = 1e-2,
     x_scale=None,
     jit: bool = True,
@@ -509,6 +511,8 @@ def least_squares_jax_solve(
     method = str(method).strip().lower()
     profile_data = _make_profile(profile)
     deadline = _deadline_from_limit(wall_clock_limit_s)
+    ftol_value = float(gtol if ftol is None else ftol)
+    xtol_value = float(gtol if xtol is None else xtol)
 
     def residuals_y_raw(y):
         return residual_fun(y * scale)
@@ -688,8 +692,8 @@ def least_squares_jax_solve(
                 if jac_scipy in ("jax", "auto", "reverse", "rev", "jacrev", "fd", "finite_difference", "finite-difference", "2-point", "3-point")
                 else jac_scipy,
                 max_nfev=int(max_nfev),
-                xtol=float(gtol),
-                ftol=float(gtol),
+                xtol=xtol_value,
+                ftol=ftol_value,
                 gtol=float(gtol),
                 verbose=verbose_scipy,
             )

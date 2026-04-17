@@ -16,6 +16,9 @@ Run this example with python QH_fixed_resolution_jax.py
 
 max_nfev = 10  # Maximum number of function evaluations
 max_mode = 1  # Maximum poloidal and toroidal mode numbers to vary
+ftol = 1e-4  # Function tolerance for least-squares termination
+gtol = 1e-4  # Gradient tolerance for least-squares termination
+xtol = 1e-4  # Step tolerance for least-squares termination
 
 proc0_print("Running 2_Intermediate/QH_fixed_resolution_jax.py")
 proc0_print("=================================================")
@@ -63,7 +66,9 @@ result = least_squares_jax_solve(
     method="scipy",
     jac="jax",
     max_nfev=max_nfev,
-    gtol=1e-7,
+    ftol=ftol,
+    gtol=gtol,
+    xtol=xtol,
     x_scale=stage.x_scale,
     jit=True,
     verbose=1,
