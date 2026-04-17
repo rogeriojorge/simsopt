@@ -13,6 +13,7 @@ implemented on top of `vmec_jax` with implicit differentiation.
 from __future__ import annotations
 
 from dataclasses import replace
+import os
 import re
 from typing import Sequence
 from types import SimpleNamespace
@@ -916,19 +917,33 @@ class VmecJax:
             }
             self._discrete_jacobian_helper_cache[cache_key] = helper_cache
 
-        directions = jnp.asarray(np.eye(int(x_free.size), dtype=float), dtype=x_free.dtype)
-        packed_tangents0 = helper_cache["initial_tangent_columns"](
-            x_free,
-            directions,
-        )
-        packed_tangents = vj.checkpoint_tape_state_jvp_columns(
-            tape=payload["tape"],
-            static=static,
-            initial_tangents=packed_tangents0,
-            rebuild_preconditioner=True,
-        )
-        columns = helper_cache["residual_tangent_columns"](packed_final, packed_tangents)
-        return np.asarray(columns, dtype=float).T
+        n_free = int(x_free.size)
+        env_chunk = os.environ.get("SIMSOPT_VMEC_JAX_JAC_CHUNK")
+        jac_chunk = max(1, int(env_chunk)) if env_chunk is not None else n_free
+
+        def _direction_chunk(start):
+            width = min(jac_chunk, n_free - start)
+            chunk = np.zeros((jac_chunk, n_free), dtype=float)
+            chunk[np.arange(width), start + np.arange(width)] = 1.0
+            return width, jnp.asarray(chunk, dtype=x_free.dtype)
+
+        column_chunks = []
+        for start in range(0, n_free, jac_chunk):
+            width, directions = _direction_chunk(start)
+            packed_tangents0 = helper_cache["initial_tangent_columns"](
+                x_free,
+                directions,
+            )
+            packed_tangents = vj.checkpoint_tape_state_jvp_columns(
+                tape=payload["tape"],
+                static=static,
+                initial_tangents=packed_tangents0,
+                rebuild_preconditioner=True,
+            )
+            chunk_columns = helper_cache["residual_tangent_columns"](packed_final, packed_tangents)
+            column_chunks.append(np.asarray(chunk_columns[:width], dtype=float))
+
+        return np.concatenate(column_chunks, axis=0).T
 
     def _solve_state_residual_forward(self, x_free, *, step_size: float):
         from vmec_jax.solve import solve_fixed_boundary_residual_iter

@@ -697,3 +697,48 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
       - chunking the Jacobian columns inside `VmecJax._discrete_adjoint_residual_jacobian`
         preserved the derivative regressions but did not deliver a clear memory
         win, so it was reverted instead of kept.
+    - follow-up exact streamed audit on the merged branch after exposing
+      explicit `ftol/gtol/xtol` in `least_squares_jax_solve(...)` and the
+      teaching script:
+      - committed `ae8fe1a3` so the public SciPy/JAX entry points now take
+        explicit `ftol` and `xtol` instead of forcing them to equal `gtol`;
+      - exact `mode=1` with `VMEC_JAX_DYNAMIC_REPLAY_BUCKET=1024` still dies
+        before convergence, but the streamed trajectory is materially stronger
+        than the earlier cold coarse-bucket run:
+        `0.2983122 -> 0.2605233 -> 0.2490250 -> 0.2440611 -> 0.2417510 -> 0.2406365`
+        by `nfev_observed=11` and `elapsed_s≈160.23`;
+      - on that latest run, observed peak RSS dropped to about `9.06 GB`,
+        which is much lower than the earlier `17-19 GB` coarse-bucket probes
+        and suggests the warmed exact path is no longer dominated by the same
+        compile spike;
+      - exact `mode=2` on the same warmed/coarse configuration also progresses
+        further than the earlier audit:
+        `0.3002458 -> 0.2262223 -> 0.2016143 -> 0.1987163`
+        by `nfev_observed=9` and `elapsed_s≈151.88`;
+      - the latest exact `mode=2` run still dies before tolerance or wall-clock
+        completion, and its observed peak RSS is still high at about `23.10 GB`;
+      - practical conclusion:
+        - both exact JAX modes are now clearly optimizing the stellarator on
+          accepted iterates under the intended `1e-4` tolerance regime;
+        - the live blocker has narrowed further to long-run memory/runtime in
+          the exact path, especially `mode=2`, not a gross outer-solver failure
+          to descend.
+    - mode-2 Jacobian-column chunking audit on 2026-04-17:
+      - added a local env-controlled Jacobian chunk path in
+        `VmecJax._discrete_adjoint_residual_jacobian(...)` for experiments;
+      - making chunking the default for larger control spaces was rejected,
+        because it reduced memory but delayed accepted iterates too much;
+      - exact `mode=2` with `SIMSOPT_VMEC_JAX_JAC_CHUNK=8`:
+        - accepted iterates still reached `0.2262223 -> 0.2016143`;
+        - observed peak RSS dropped from about `23.10 GB` to about `20.77 GB`;
+        - but the same progress took longer and the child still exited without
+          completing the run;
+      - exact `mode=2` with `SIMSOPT_VMEC_JAX_JAC_CHUNK=4`:
+        - observed peak RSS dropped further to about `19.35 GB`;
+        - but only the first two accepted iterates were reached within the
+          300 s window (`0.2262223 -> 0.2016143`);
+      - practical conclusion:
+        - chunking Jacobian columns is a real memory lever for large
+          `max_mode=2` runs;
+        - it should remain opt-in for now rather than default, because the
+          runtime penalty outweighs the benefit on the current baseline.
