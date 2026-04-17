@@ -25,6 +25,9 @@ from simsopt.solve import build_vmec_objective_stage
 DEFAULT_OUTPUT_DIR = Path("/Users/rogeriojorge/local/tests/qh_compare_outputs")
 WALL_CLOCK_LIMIT_S = 300.0
 MAX_NFEV = 20
+DEFAULT_FTOL = 1.0e-4
+DEFAULT_GTOL = 1.0e-4
+DEFAULT_XTOL = 1.0e-4
 
 
 class WallClockStop(RuntimeError):
@@ -149,7 +152,15 @@ def jax_metrics(context, x):
     }
 
 
-def make_iteration_logger(context, solver_name, start_time, wall_clock_limit_s):
+def make_iteration_logger(
+    context,
+    solver_name,
+    start_time,
+    wall_clock_limit_s,
+    *,
+    metrics_fun=None,
+    iterations_path=None,
+):
     rows = []
     counters = {
         "residual_calls": 0,
@@ -157,6 +168,9 @@ def make_iteration_logger(context, solver_name, start_time, wall_clock_limit_s):
     }
     last_logged_x = None
     last_eval_x = None
+    iterations_handle = None
+    if iterations_path is not None:
+        iterations_handle = Path(iterations_path).open("w")
 
     def log_snapshot(label, x):
         nonlocal last_logged_x
@@ -171,7 +185,12 @@ def make_iteration_logger(context, solver_name, start_time, wall_clock_limit_s):
             "peak_rss_bytes": peak_rss_bytes(),
             "x": x.tolist(),
         }
+        if metrics_fun is not None:
+            snapshot.update(metrics_fun(x))
         rows.append(snapshot)
+        if iterations_handle is not None:
+            iterations_handle.write(json.dumps(snapshot) + "\n")
+            iterations_handle.flush()
         last_logged_x = x.copy()
         return snapshot
 
@@ -209,12 +228,19 @@ def make_iteration_logger(context, solver_name, start_time, wall_clock_limit_s):
         if last_logged_x is None or np.linalg.norm(final_x - last_logged_x) > 0.0:
             log_snapshot(label, final_x)
 
-    return rows, counters, log_snapshot, residual_wrapper, jacobian_wrapper, callback, finalize
+    def close():
+        if iterations_handle is not None:
+            iterations_handle.close()
+
+    return rows, counters, log_snapshot, residual_wrapper, jacobian_wrapper, callback, finalize, close
 
 
 def enrich_iteration_metrics(rows, context, solver_name):
     enriched = []
     for row in rows:
+        if "total_objective" in row:
+            enriched.append(dict(row))
+            continue
         x = np.asarray(row["x"], dtype=float)
         if solver_name == "classic":
             metrics = classic_metrics(context, x)
@@ -226,7 +252,18 @@ def enrich_iteration_metrics(rows, context, solver_name):
     return enriched
 
 
-def run_case(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir):
+def run_case(
+    case_name,
+    max_mode,
+    max_nfev,
+    wall_clock_limit_s,
+    output_dir,
+    *,
+    ftol,
+    gtol,
+    xtol,
+    profile_jax=False,
+):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / f"{case_name}_mode{max_mode}_summary.json"
@@ -234,17 +271,21 @@ def run_case(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir):
 
     if case_name == "classic":
         context = make_classic_context(max_mode)
+        metrics_fun = lambda x: classic_metrics(context, x)
     elif case_name == "jax":
         context = make_jax_context(max_mode)
+        metrics_fun = lambda x: jax_metrics(context, x)
     else:
         raise ValueError(f"Unsupported case: {case_name}")
 
     start_time = time.perf_counter()
-    rows, counters, log_snapshot, residual_wrapper, jacobian_wrapper, callback, finalize = make_iteration_logger(
+    rows, counters, log_snapshot, residual_wrapper, jacobian_wrapper, callback, finalize, close_logger = make_iteration_logger(
         context,
         case_name,
         start_time,
         wall_clock_limit_s,
+        metrics_fun=metrics_fun,
+        iterations_path=iterations_path,
     )
     log_snapshot("initial", context["x0"])
 
@@ -252,6 +293,9 @@ def run_case(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir):
     timed_out = False
     error_text = None
     metrics_error_text = None
+    jax_trace_dir = None
+    jax_device_memory_profile = None
+    profiler_started = False
 
     try:
         if case_name == "classic":
@@ -270,13 +314,21 @@ def run_case(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir):
                 jac=jac_fun,
                 x_scale=context["x_scale"],
                 max_nfev=int(max_nfev),
-                ftol=1.0e-8,
-                xtol=1.0e-8,
-                gtol=1.0e-8,
+                ftol=float(ftol),
+                xtol=float(xtol),
+                gtol=float(gtol),
                 verbose=2,
                 callback=callback,
             )
         else:
+            if profile_jax:
+                import jax.profiler
+
+                jax_trace_dir = str(Path(output_dir) / f"jax_mode{int(max_mode)}_trace")
+                Path(jax_trace_dir).mkdir(parents=True, exist_ok=True)
+                jax.profiler.start_trace(jax_trace_dir)
+                profiler_started = True
+
             residual_fun = residual_wrapper(
                 lambda x: np.asarray(context["stage"].residuals.scipy_residuals(np.asarray(x, dtype=float)), dtype=float)
             )
@@ -289,9 +341,9 @@ def run_case(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir):
                 jac=jac_fun,
                 x_scale=context["x_scale"],
                 max_nfev=int(max_nfev),
-                ftol=1.0e-7,
-                xtol=1.0e-7,
-                gtol=1.0e-7,
+                ftol=float(ftol),
+                xtol=float(xtol),
+                gtol=float(gtol),
                 verbose=2,
                 callback=callback,
             )
@@ -300,6 +352,17 @@ def run_case(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir):
         error_text = str(exc)
     except Exception:
         error_text = traceback.format_exc()
+    finally:
+        if profiler_started:
+            try:
+                import jax.profiler
+
+                jax.profiler.stop_trace()
+                if hasattr(jax.profiler, "save_device_memory_profile"):
+                    jax_device_memory_profile = str(Path(output_dir) / f"jax_mode{int(max_mode)}_device_memory.prof")
+                    jax.profiler.save_device_memory_profile(jax_device_memory_profile)
+            except Exception:
+                pass
 
     final_x = None
     if result is not None:
@@ -309,12 +372,17 @@ def run_case(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir):
         rows = enrich_iteration_metrics(rows, context, case_name)
     except Exception:
         metrics_error_text = traceback.format_exc()
+    finally:
+        close_logger()
 
     summary = {
         "case": case_name,
         "max_mode": int(max_mode),
         "max_nfev": int(max_nfev),
         "wall_clock_limit_s": float(wall_clock_limit_s),
+        "ftol": float(ftol),
+        "gtol": float(gtol),
+        "xtol": float(xtol),
         "timed_out": bool(timed_out),
         "error": error_text,
         "elapsed_s": float(time.perf_counter() - start_time),
@@ -323,6 +391,8 @@ def run_case(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir):
         "jacobian_calls": int(counters["jacobian_calls"]),
         "n_iterations_logged": len(rows),
         "metrics_error": metrics_error_text,
+        "jax_trace_dir": jax_trace_dir,
+        "jax_device_memory_profile": jax_device_memory_profile,
     }
     if result is not None:
         summary.update(
@@ -341,14 +411,31 @@ def run_case(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir):
 
     with summary_path.open("w") as f:
         json.dump(summary, f, indent=2)
-    with iterations_path.open("w") as f:
-        for row in rows:
-            f.write(json.dumps(row) + "\n")
 
     return summary_path, iterations_path
 
 
-def run_case_subprocess(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir):
+def _count_compile_log_lines(text):
+    count = 0
+    for line in str(text).splitlines():
+        if "Compiling " in line or "Finished XLA compilation of" in line:
+            count += 1
+    return count
+
+
+def run_case_subprocess(
+    case_name,
+    max_mode,
+    max_nfev,
+    wall_clock_limit_s,
+    output_dir,
+    *,
+    ftol,
+    gtol,
+    xtol,
+    log_jax_compiles=False,
+    profile_jax=False,
+):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = output_dir / f"{case_name}_mode{max_mode}.stdout.txt"
@@ -366,13 +453,25 @@ def run_case_subprocess(case_name, max_mode, max_nfev, wall_clock_limit_s, outpu
         str(wall_clock_limit_s),
         "--output-dir",
         str(output_dir),
+        "--ftol",
+        str(ftol),
+        "--gtol",
+        str(gtol),
+        "--xtol",
+        str(xtol),
     ]
+    if profile_jax and case_name == "jax":
+        cmd.append("--profile-jax")
+    env = os.environ.copy()
+    if log_jax_compiles and case_name == "jax":
+        env["JAX_LOG_COMPILES"] = "1"
     proc = subprocess.run(
         cmd,
         cwd=str(Path(__file__).resolve().parents[2]),
         capture_output=True,
         text=True,
         timeout=float(wall_clock_limit_s) + 120.0,
+        env=env,
     )
     stdout_path.write_text(proc.stdout)
     stderr_path.write_text(proc.stderr)
@@ -384,6 +483,7 @@ def run_case_subprocess(case_name, max_mode, max_nfev, wall_clock_limit_s, outpu
         "iterations_path": iterations_path,
         "stdout_path": stdout_path,
         "stderr_path": stderr_path,
+        "compile_log_lines": _count_compile_log_lines(proc.stdout) + _count_compile_log_lines(proc.stderr),
     }
 
 
@@ -402,25 +502,24 @@ def load_jsonl(path):
     return rows
 
 
-def write_summary_markdown(results, output_dir):
+def write_summary_markdown(results, output_dir, *, ftol, gtol, xtol):
     output_dir = Path(output_dir)
     summary_md = output_dir / "summary.md"
     lines = [
         "# QH Classic vs JAX comparison",
         "",
         "- Stable comparison set generated from direct per-case runs.",
-        "- Classic runs used a 300 s wall-clock cap.",
-        "- JAX runs used shorter caps to stay inside the exact-path stable window.",
         f"- Max nfev requested per case: {MAX_NFEV}",
+        f"- Tolerances: ftol={float(ftol):g}, gtol={float(gtol):g}, xtol={float(xtol):g}",
         "",
-        "| case | mode | wall cap (s) | timed out | success | elapsed (s) | peak RSS (GB) | final total | final qs | final aspect |",
-        "| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        "| case | mode | wall cap (s) | timed out | success | elapsed (s) | peak RSS (GB) | compile logs | final total | final qs | final aspect |",
+        "| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for item in results:
         summary = item["summary"]
         final_row = summary.get("final", {})
         lines.append(
-            "| {case} | {mode} | {wall_cap:.0f} | {timed_out} | {success} | {elapsed:.2f} | {peak:.2f} | {total:.6f} | {qs:.6f} | {aspect:.6f} |".format(
+            "| {case} | {mode} | {wall_cap:.0f} | {timed_out} | {success} | {elapsed:.2f} | {peak:.2f} | {compiles} | {total:.6f} | {qs:.6f} | {aspect:.6f} |".format(
                 case=summary["case"],
                 mode=summary["max_mode"],
                 wall_cap=float(summary.get("wall_clock_limit_s", float("nan"))),
@@ -428,6 +527,7 @@ def write_summary_markdown(results, output_dir):
                 success=summary.get("success", False),
                 elapsed=float(summary.get("elapsed_s", 0.0)),
                 peak=float(summary.get("peak_rss_bytes", 0)) / (1024.0 ** 3),
+                compiles=int(item.get("compile_log_lines", 0)),
                 total=float(final_row.get("total_objective", float("nan"))),
                 qs=float(final_row.get("qs_objective", float("nan"))),
                 aspect=float(final_row.get("aspect_value", float("nan"))),
@@ -495,7 +595,7 @@ def make_mode_plot(mode, series_by_case, output_dir):
     return output_path
 
 
-def run_parent(output_dir, max_nfev, wall_clock_limit_s):
+def run_parent(output_dir, max_nfev, wall_clock_limit_s, *, ftol, gtol, xtol, log_jax_compiles=False, profile_jax=False):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -503,7 +603,18 @@ def run_parent(output_dir, max_nfev, wall_clock_limit_s):
     for max_mode in (1, 2):
         for case_name in ("classic", "jax"):
             gc.collect()
-            child = run_case_subprocess(case_name, max_mode, max_nfev, wall_clock_limit_s, output_dir)
+            child = run_case_subprocess(
+                case_name,
+                max_mode,
+                max_nfev,
+                wall_clock_limit_s,
+                output_dir,
+                ftol=ftol,
+                gtol=gtol,
+                xtol=xtol,
+                log_jax_compiles=log_jax_compiles,
+                profile_jax=profile_jax,
+            )
             if child["summary_path"].exists():
                 summary = load_json(child["summary_path"])
             else:
@@ -512,6 +623,9 @@ def run_parent(output_dir, max_nfev, wall_clock_limit_s):
                     "max_mode": max_mode,
                     "max_nfev": max_nfev,
                     "wall_clock_limit_s": wall_clock_limit_s,
+                    "ftol": float(ftol),
+                    "gtol": float(gtol),
+                    "xtol": float(xtol),
                     "timed_out": False,
                     "success": False,
                     "status": -999,
@@ -529,6 +643,7 @@ def run_parent(output_dir, max_nfev, wall_clock_limit_s):
                     "iterations": iterations,
                     "stdout_path": str(child["stdout_path"]),
                     "stderr_path": str(child["stderr_path"]),
+                    "compile_log_lines": int(child.get("compile_log_lines", 0)),
                 }
             )
 
@@ -537,13 +652,16 @@ def run_parent(output_dir, max_nfev, wall_clock_limit_s):
         series = {item["case"]: item["iterations"] for item in results if item["mode"] == max_mode}
         plot_paths.append(make_mode_plot(max_mode, series, output_dir))
 
-    summary_md = write_summary_markdown(results, output_dir)
+    summary_md = write_summary_markdown(results, output_dir, ftol=ftol, gtol=gtol, xtol=xtol)
     manifest_path = output_dir / "manifest.json"
     manifest = {
         "output_dir": str(output_dir),
         "summary_markdown": str(summary_md),
         "plots": [str(path) for path in plot_paths],
         "results": results,
+        "ftol": float(ftol),
+        "gtol": float(gtol),
+        "xtol": float(xtol),
     }
     manifest_path.write_text(json.dumps(manifest, indent=2))
     return manifest_path
@@ -556,13 +674,37 @@ def main():
     parser.add_argument("--max-nfev", type=int, default=MAX_NFEV)
     parser.add_argument("--wall-clock-limit", type=float, default=WALL_CLOCK_LIMIT_S)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--ftol", type=float, default=DEFAULT_FTOL)
+    parser.add_argument("--gtol", type=float, default=DEFAULT_GTOL)
+    parser.add_argument("--xtol", type=float, default=DEFAULT_XTOL)
+    parser.add_argument("--log-jax-compiles", action="store_true")
+    parser.add_argument("--profile-jax", action="store_true")
     args = parser.parse_args()
 
     if args.run_case is not None:
-        run_case(args.run_case, args.max_mode, args.max_nfev, args.wall_clock_limit, args.output_dir)
+        run_case(
+            args.run_case,
+            args.max_mode,
+            args.max_nfev,
+            args.wall_clock_limit,
+            args.output_dir,
+            ftol=args.ftol,
+            gtol=args.gtol,
+            xtol=args.xtol,
+            profile_jax=args.profile_jax,
+        )
         return
 
-    manifest_path = run_parent(args.output_dir, args.max_nfev, args.wall_clock_limit)
+    manifest_path = run_parent(
+        args.output_dir,
+        args.max_nfev,
+        args.wall_clock_limit,
+        ftol=args.ftol,
+        gtol=args.gtol,
+        xtol=args.xtol,
+        log_jax_compiles=args.log_jax_compiles,
+        profile_jax=args.profile_jax,
+    )
     print(json.dumps({"manifest": str(manifest_path)}, indent=2))
 
 

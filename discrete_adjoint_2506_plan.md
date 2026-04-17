@@ -646,3 +646,54 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
       - switching SciPy to `x_scale = 1` cuts runtime (about `58.87 s` vs
         `80.34 s` on the 3-eval probe) but still yields no descent, so
         `x_scale` is not the root cause of the mode-2 failure.
+  - Tolerance/trajectory audit on 2026-04-17 using the comparison harness:
+    - updated
+      `/Users/rogeriojorge/local/simsopt_discrete_adjoint/tools/diagnostics/qh_classic_vs_jax_compare.py`
+      so it now accepts explicit `ftol/gtol/xtol`, can enable JAX compile
+      logging / profiler traces, and streams iteration snapshots to JSONL
+      during the run so JAX trajectories survive child-process kills;
+    - classic reference at `ftol=gtol=xtol=1e-4`:
+      - `max_mode=1` converges by `ftol` in `11` function evaluations to
+        total objective `0.21378074051825927`;
+      - `max_mode=2` hits the 300 s cap but already reaches
+        `0.005157962624944747`;
+    - long profiled JAX children (`--log-jax-compiles --profile-jax`) are not
+      viable on the exact path today: both `mode=1` and `mode=2` were killed
+      with return code `-9` before writing summaries, and the trace dirs stayed
+      empty because the children died before `stop_trace()` flushed;
+    - compile-log audit from those killed runs:
+      - `mode=1` produced about `1294` compile-log lines;
+      - `mode=2` produced about `1282` compile-log lines;
+      - repeated `_run_scan` variants still appear with different stacked
+        dimensions (`192/672/768` in the mode-1 trace and `896/928` in the
+        mode-2 trace), so executable-shape churn remains real even after the
+        replay-bucketing pass;
+    - exact unprofiled JAX runs at these tolerances still do not finish
+      cleanly without extra care:
+      - plain `mode=1` children were killed with exit `137`;
+      - forcing `VMEC_JAX_DYNAMIC_REPLAY_BUCKET=1024` preserves the trajectory
+        longer and yields stable accepted iterates
+        `0.2983122 -> 0.2605233 -> 0.2490250 -> 0.2440611 -> 0.2417510 -> 0.2406365`
+        by `nfev_observed=11`, but the child is still killed before
+        convergence;
+      - on that cold coarse-bucket run, peak RSS reached about `19.24 GB`;
+      - a warmed rerun of the same coarse-bucket configuration lowered the
+        observed peak to about `17.22 GB`, which means compilation/executable
+        construction is a material part of the spike, but it still died before
+        convergence;
+      - `mode=2` with the same coarse replay bucket does descend on accepted
+        iterates:
+        `0.3002458 -> 0.2262223 -> 0.2016143`, then times out at 300 s while
+        SciPy is evaluating a bad trial point (`9.6058824`) rather than a new
+        accepted iterate;
+    - important memory audit:
+      - on the exact `mode=1` QH start point, the discrete-adjoint tape itself
+        is small: `dynamic_base_carries_stacked` is only about `47.7 MB` and
+        `stacked_step_traces` only about `0.02 MB`;
+      - therefore the `~17-22 GB` spikes are not explained by stored replay
+        tape size; the remaining memory problem is in the live exact
+        solve/JVP/compile path itself;
+    - rejected local experiment:
+      - chunking the Jacobian columns inside `VmecJax._discrete_adjoint_residual_jacobian`
+        preserved the derivative regressions but did not deliver a clear memory
+        win, so it was reverted instead of kept.
