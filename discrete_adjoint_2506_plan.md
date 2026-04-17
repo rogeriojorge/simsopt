@@ -742,3 +742,21 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
           `max_mode=2` runs;
         - it should remain opt-in for now rather than default, because the
           runtime penalty outweighs the benefit on the current baseline.
+    - follow-up vmec_jax-side replay chunking audit on 2026-04-17:
+      - moved the chunking experiment down into the vmec_jax replay-column
+        transport via `VMEC_JAX_REPLAY_COLUMN_CHUNK`, so the exact
+        initial-state and residual linearizations stay batched while only the
+        expensive replay scan is chunked;
+      - this preserved the exact derivative regressions and gave a better
+        tradeoff than wrapper-side chunking:
+        - `chunk=8`: peak RSS about `20.32 GB`, accepted iterates still reached
+          `0.2262223 -> 0.2016143`, but slower than baseline;
+        - `chunk=12`: peak RSS as low as about `17.81 GB` on the cold run, and
+          the warmed rerun still reached `0.1987163` by `nfev_observed=9` with
+          peak RSS about `21.56 GB`;
+      - practical conclusion:
+        - if mode-2 exact runs need an opt-in survival knob today, the replay-side
+          chunker is the right one to use, not the old wrapper-side chunker;
+        - it still does not eliminate the long-run exact-path exit, so the
+          default shipping path should remain unchunked until a better
+          runtime/memory balance is found.
