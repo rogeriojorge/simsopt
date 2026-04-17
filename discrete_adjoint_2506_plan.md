@@ -613,3 +613,15 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
     - conclusion: the next runtime pass should stay solver-side
       (forward exact solve / replay transport), not wrapper-side nearby-point
       continuation.
+  - Post-merge audit on 2026-04-17 after merging `origin/main` from
+    `vmec_jax` into the feature branch:
+    - the merged branch preserves the current exact QH result at
+      `max_mode=1`, `max_nfev=3`: final total `0.26052325878767574`;
+    - targeted wrapper checks still pass on the updated branch;
+    - exact nearby-point callback probes show the remaining solver-side churn:
+      the discrete-adjoint tape length changes across nearby QH points
+      (`786 -> 792 -> 794`), and the callback timings still move with that
+      shape drift (`x1` about `5.90 s + 3.43 s`, `x2` about `6.32 s + 5.58 s`
+      for solve + jacobian);
+    - that makes padded/bucketed replay traces the next high-value runtime
+      target, not another wrapper cache change.
