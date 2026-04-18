@@ -34,7 +34,7 @@ vmec.use_residual_autodiff_defaults(
 )
 vmec.set_solver_options(residual_derivative_backend="discrete_adjoint", jit_forces=True)
 
-# Define objective function and parameter space:
+# Define parameter space:
 objective_tuples = [("aspect", 7.0, 1.0), ("qs", 0.0, 1.0)]
 stage = build_vmec_objective_stage(
     vmec,
@@ -52,6 +52,7 @@ residuals_from_state = stage.extras["residuals_from_state"]
 
 proc0_print("Parameter space:", stage.free_names)
 
+# Configure quasisymmetry objective:
 state = vmec.solve_state_for_objective(stage.x0)
 residual = np.asarray(residuals_from_state(state), dtype=float)
 
@@ -59,7 +60,7 @@ proc0_print("Quasisymmetry objective before optimization:", float(np.asarray(qs.
 proc0_print("Total objective before optimization:", float(np.dot(residual, residual)))
 
 # Unlike the classic example, the Jacobian here comes from vmec_jax through
-# JAX autodiff / discrete adjoints instead of finite differences.
+# the exact autodiff / discrete-adjoint route instead of finite differences.
 result = least_squares_jax_solve(
     stage.residuals,
     stage.x0,

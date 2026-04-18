@@ -994,3 +994,21 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - the next remaining bottleneck is the post-step exact work and
           general long-run memory retention once the optimizer is already
           descending well.
+    - teaching-script / standalone-example follow-up on 2026-04-18:
+      - kept `examples/2_Intermediate/QH_fixed_resolution_jax.py` on the exact
+        concrete Gauss-Newton + discrete-adjoint route, but tightened the
+        comments/workflow so it stays closer to the classic
+        `QH_fixed_resolution.py` structure:
+        - direct parameter-space setup,
+        - explicit QS objective section,
+        - before/after objective prints,
+        - no finite differences or vmec2000 dependency;
+      - confirmed the wrapper-side teaching example still compiles after the
+        comment/workflow cleanup;
+      - moved the reusable standalone QS diagnostic layer into vmec_jax so the
+        exact QH route no longer has to live only behind the simsopt wrapper;
+      - current status:
+        - simsopt teaching script remains the primary user-facing QH example;
+        - standalone vmec_jax exact example work is now unblocked by the new
+          vmec_jax-side QS API, and the remaining work stays focused on
+          runtime/memory rather than missing diagnostics.
