@@ -760,3 +760,38 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - it still does not eliminate the long-run exact-path exit, so the
           default shipping path should remain unchunked until a better
           runtime/memory balance is found.
+    - finite-difference vmec_jax aside on 2026-04-17:
+      - question asked: can vmec_jax be used like classic vmec2000 with outer
+        finite differences, relying on warm in-process JIT reuse after the
+        first forward solve?
+      - answer: yes in principle, but only if the residual callback is truly
+        forward-only; using the old discrete-adjoint SciPy residual override
+        would build replay tapes and completely spoil the experiment;
+      - added
+        `/Users/rogeriojorge/local/simsopt_discrete_adjoint/examples/2_Intermediate/QH_fixed_resolution_jaxfd.py`
+        as the teaching-script variant that uses vmec_jax forward solves plus
+        SciPy `jac=\"2-point\"` on a serial residual callback so perturbed
+        evaluations can reuse warm JAX executables in the same process;
+      - corrected script configuration:
+        - force `residual_derivative_backend=\"implicit\"`,
+          `residual_adjoint_mode=\"auto\"`,
+          `residual_tangent_mode=\"opaque\"`;
+        - call a local `residuals_fd(x)` built from
+          `vmec.solve_state_for_objective(x)` instead of the
+          discrete-adjoint `scipy_residuals` override;
+      - measured `max_mode=1`, `max_nfev=10`, `ftol=gtol=xtol=1e-4`:
+        - cold timed run:
+          - died before the first accepted iterate after about `156.38 s`;
+          - max RSS about `22.69 GB`;
+          - macOS peak footprint about `49.30 GB`;
+        - warm timed rerun:
+          - still died before the first accepted iterate after about `169.01 s`;
+          - max RSS about `19.16 GB`;
+          - peak footprint about `45.68 GB`;
+        - one unbuffered run did briefly progress farther, reaching SciPy
+          iteration 1 / `nfev=3` with cost `1.2958e-01`, then exited;
+      - practical conclusion:
+        - warm-JIT vmec_jax + outer finite differences is technically possible;
+        - on the current branch it is not a practical fallback for QH, because
+          even the corrected forward-only FD path remains too memory-heavy and
+          unstable to beat the exact discrete-adjoint path.
