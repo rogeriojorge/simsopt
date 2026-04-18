@@ -795,3 +795,30 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - on the current branch it is not a practical fallback for QH, because
           even the corrected forward-only FD path remains too memory-heavy and
           unstable to beat the exact discrete-adjoint path.
+    - classic-MPI finite-difference vmec_jax audit on 2026-04-17:
+      - user also asked whether the existing
+        `least_squares_mpi_solve`/`MPIFiniteDifference` workflow could be
+        reused directly with vmec_jax so the only swap would be `vmec2000 ->
+        vmec_jax`;
+      - answer: not directly, because both
+        `QuasisymmetryRatioResidual` and `LeastSquaresProblem.from_tuples(...)`
+        assume an `Optimizable` parent graph, while `VmecJax` is a concrete
+        wrapper, not an `Optimizable`;
+      - added
+        `/Users/rogeriojorge/local/simsopt_discrete_adjoint/examples/2_Intermediate/QH_fixed_resolution_jaxfd_mpi.py`
+        to test the closest faithful fallback:
+        - vmec_jax forward-only residual path,
+        - JAX-native QS helper (`QuasisymmetryRatioResidualJax`),
+        - a minimal local `Optimizable` shim so
+          `least_squares_mpi_solve(..., grad=True)` will accept the problem;
+      - measured result on `mpirun -n 2`:
+        - the corrected script reaches the SciPy table only after about
+          `75 s`, at which point it is still at iteration 0 / `nfev=1` with
+          cost `1.4916e-01`;
+        - this is already too slow to be a serious fallback relative to both
+          the classic VMEC2000 path and the exact discrete-adjoint path;
+      - practical conclusion:
+        - a “just swap vmec2000 for vmec_jax under least_squares_mpi_solve”
+          fallback is not attractive on the current branch;
+        - the exact discrete-adjoint route remains the only credible path to
+          ship.
