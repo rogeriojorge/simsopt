@@ -1036,3 +1036,25 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - quasisymmetry now has a single implementation in vmec_jax;
         - simsopt is reduced to a thin consumer/wrapper layer, which is the
           right ownership boundary for future maintenance.
+    - exact callback cache-retention audit on 2026-04-18:
+      - after the QS dedup refactor was stable, audited whether the exact
+        SciPy callback cache was holding onto the old tape payload longer than
+        needed;
+      - added an explicit `scipy_clear_callback_cache` hook on the exact
+        stage object and called it in the concrete exact Gauss-Newton loop
+        immediately after Jacobian formation, since the subsequent line search
+        uses forward-only residuals and does not need the old tape payload;
+      - validation:
+        - `tests/solve/test_jax_solve.py` still passes;
+        - targeted wrapper regressions still pass;
+      - exact `max_mode=2`, `max_nfev=2` benchmark after the change:
+        - final cost `3.102202e-02` (same total objective `~0.0620440`);
+        - elapsed about `102.05 s`;
+        - max RSS about `16.10 GB`;
+        - peak footprint about `28.24 GB`;
+      - conclusion:
+        - the callback-clear hook is safe and simplifies cache lifetime;
+        - but it is not the main memory win by itself;
+        - the remaining long-run resource problem is still dominated by the
+          Jacobian/replay/compile side rather than a single stale callback
+          payload.

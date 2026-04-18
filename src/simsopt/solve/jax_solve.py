@@ -483,6 +483,7 @@ def build_vmec_objective_stage(
         residuals.scipy_jacobian = scipy_jacobian
         residuals.scipy_state_payload = scipy_state_payload
         residuals.scipy_forward_residuals = scipy_forward_residuals
+        residuals.scipy_clear_callback_cache = _clear_scipy_callback_cache
 
     return VmecObjectiveStage(
         x0=x0,
@@ -679,6 +680,7 @@ def least_squares_jax_solve(
     scipy_jacobian_override = getattr(residual_fun, "scipy_jacobian", None)
     scipy_residuals_override = getattr(residual_fun, "scipy_residuals", None)
     scipy_forward_residuals_override = getattr(residual_fun, "scipy_forward_residuals", None)
+    scipy_clear_callback_cache = getattr(residual_fun, "scipy_clear_callback_cache", None)
 
     def residuals_numpy(y_np):
         y_arr = jnp.asarray(y_np, dtype=y0.dtype)
@@ -865,6 +867,8 @@ def least_squares_jax_solve(
                 cost_current = float(0.5 * np.dot(residual_np, residual_np))
                 grad_np = J_np.T @ residual_np
                 grad = jnp.asarray(grad_np, dtype=y.dtype)
+                if callable(scipy_clear_callback_cache):
+                    scipy_clear_callback_cache()
             else:
                 residual = residuals_y(y)
                 J = jacobian_y(y)
