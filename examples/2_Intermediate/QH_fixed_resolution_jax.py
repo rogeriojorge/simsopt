@@ -27,7 +27,7 @@ proc0_print("=================================================")
 filename = os.path.join(os.path.dirname(__file__), "inputs", "input.nfp4_QH_warm_start")
 vmec = VmecJax(filename, verbose=False)
 vmec.use_residual_autodiff_defaults(
-    outer_method="scipy",
+    outer_method="gauss_newton",
     residual_adjoint_mode="chunked",
     stateless_evaluations=False,
     optimization_profile="qh",
@@ -63,7 +63,7 @@ proc0_print("Total objective before optimization:", float(np.dot(residual, resid
 result = least_squares_jax_solve(
     stage.residuals,
     stage.x0,
-    method="scipy",
+    method="gauss_newton",
     jac="jax",
     max_nfev=max_nfev,
     ftol=ftol,

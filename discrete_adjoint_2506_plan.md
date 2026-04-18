@@ -868,3 +868,47 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - the memory reduction is real and useful;
         - the remaining blocker for `max_mode=2` is now outer-solver behavior
           on the exact Jacobian path, not another gross memory blow-up.
+    - exact Gauss-Newton solver-policy recovery on 2026-04-18:
+      - resumed from the exact `max_mode=2` zero-step audit and finished the
+        solver-side fix in `least_squares_jax_solve(...)`;
+      - key diagnosis that drove the change:
+        - at `max_mode=2`, the exact concrete Jacobian at `x0` already had a
+          strong least-squares step, with direct dense backtracking reducing
+          total objective from `0.3002458` to about `0.1127546` at
+          `alpha=0.5`;
+        - SciPy `least_squares` was still taking a zero step on the same exact
+          callback pair, so the blocker had become outer-solver policy, not
+          derivative correctness;
+      - implemented a concrete exact Gauss-Newton branch in
+        `src/simsopt/solve/jax_solve.py`:
+        - when `scipy_residuals` and `scipy_jacobian` overrides exist, the
+          `gauss_newton` method now uses those concrete callbacks directly,
+          with NumPy-based backtracking, instead of tracing a generic JAX
+          Jacobian through the full wrapper;
+        - this avoids the earlier tracer failure in `vmec_jax/profiles.py`
+          and makes the exact optimizer use the already-validated concrete
+          residual/Jacobian path;
+      - added regression coverage in
+        `tests/solve/test_jax_solve.py` for the concrete-callback
+        Gauss-Newton path;
+      - measured exact QH results on the patched branch:
+        - `max_mode=2`, `max_nfev=2`,
+          `VMEC_JAX_DYNAMIC_REPLAY_BUCKET=1024`,
+          `VMEC_JAX_REPLAY_COLUMN_CHUNK=12`:
+          - final cost `0.031022021236869375`,
+          - estimated total objective `0.06204404247373875`,
+          - elapsed about `101.48 s`,
+          - max RSS about `6.90 GB`,
+          - peak footprint about `29.05 GB`;
+        - `max_mode=1`, `max_nfev=3`,
+          `VMEC_JAX_DYNAMIC_REPLAY_BUCKET=1024`:
+          - final cost `0.11607624213849467`,
+          - estimated total objective `0.23215248427698934`,
+          - elapsed about `169.50 s`,
+          - max RSS about `19.60 GB`,
+          - peak footprint about `53.12 GB`;
+      - practical conclusion:
+        - the exact JAX path now genuinely optimizes QH in both
+          `max_mode=1` and `max_mode=2` under a non-SciPy outer solver;
+        - the remaining bottleneck is runtime and memory survival on longer
+          exact runs, not the old zero-step failure.
