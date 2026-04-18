@@ -468,6 +468,7 @@ class VmecJax:
         self._residual_adjoint_mode = "auto"
         self._residual_tangent_mode = "opaque"
         self._stateless_evaluations = False
+        self._jit_forces = "auto"
         self._reset_caches()
 
     def _reset_caches(self, *, reset_warm_start: bool = False) -> None:
@@ -588,6 +589,7 @@ class VmecJax:
         residual_adjoint_mode: str | None = None,
         residual_tangent_mode: str | None = None,
         stateless_evaluations: bool | None = None,
+        jit_forces: bool | str | None = None,
     ) -> None:
         """Update VMEC-JAX solver controls used by this wrapper."""
         if max_iter is not None:
@@ -690,6 +692,18 @@ class VmecJax:
             if stateless_evaluations != self._stateless_evaluations:
                 self._stateless_evaluations = stateless_evaluations
                 self._reset_caches(reset_warm_start=True)
+        if jit_forces is not None:
+            if isinstance(jit_forces, str):
+                jit_forces_norm = jit_forces.strip().lower()
+                if jit_forces_norm not in ("auto", "true", "false"):
+                    raise ValueError("jit_forces must be True, False, or 'auto'")
+                jit_forces_value = jit_forces_norm == "auto" if jit_forces_norm == "auto" else (jit_forces_norm == "true")
+                jit_forces_store = "auto" if jit_forces_norm == "auto" else bool(jit_forces_value)
+            else:
+                jit_forces_store = bool(jit_forces)
+            if jit_forces_store != self._jit_forces:
+                self._jit_forces = jit_forces_store
+                self._reset_caches(reset_warm_start=True)
 
     def use_residual_autodiff_defaults(
         self,
@@ -774,7 +788,7 @@ class VmecJax:
                 limit_update_rms=True,
                 verbose=False,
                 verbose_vmec2000_table=False,
-                jit_forces="auto",
+                jit_forces=self._jit_forces,
                 use_scan=False,
                 light_history=True,
                 resume_state_mode="full",
@@ -973,7 +987,7 @@ class VmecJax:
             limit_update_rms=True,
             verbose=False,
             verbose_vmec2000_table=False,
-            jit_forces="auto",
+            jit_forces=self._jit_forces,
             use_scan=False,
             light_history=True,
             resume_state_mode="full",
@@ -1113,7 +1127,7 @@ class VmecJax:
                     limit_update_rms=True,
                     verbose=False,
                     verbose_vmec2000_table=False,
-                    jit_forces="auto",
+                    jit_forces=self._jit_forces,
                     use_scan=False,
                 )
                 return res.state

@@ -32,7 +32,7 @@ vmec.use_residual_autodiff_defaults(
     stateless_evaluations=False,
     optimization_profile="qh",
 )
-vmec.set_solver_options(residual_derivative_backend="discrete_adjoint")
+vmec.set_solver_options(residual_derivative_backend="discrete_adjoint", jit_forces=True)
 
 # Define objective function and parameter space:
 objective_tuples = [("aspect", 7.0, 1.0), ("qs", 0.0, 1.0)]

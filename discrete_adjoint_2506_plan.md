@@ -945,3 +945,23 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - the remaining blocker is long-run exact memory/runtime, especially
           peak executable/footprint retention once the optimizer is actually
           moving.
+    - exact `jit_forces` wrapper exposure on 2026-04-18:
+      - resumed the earlier raw vmec_jax forward-solve audit and checked
+        whether the same force-kernel knob was even available in the exact
+        optimizer path;
+      - result:
+        - the wrapper had been hardcoding `jit_forces="auto"` internally and
+          did not expose that option through `VmecJax.set_solver_options(...)`,
+          so the optimization path could not be benchmarked or tuned directly;
+      - added `jit_forces` to the wrapper solver options and threaded it
+        through the three exact residual solve sites used by the discrete
+        backend; added a small wrapper regression for the new option;
+      - measured exact `max_mode=2`, `max_nfev=1` Gauss-Newton results:
+        - `jit_forces=False`: elapsed about `102.87 s`
+        - `jit_forces=True`: elapsed about `60.80 s`
+        - `jit_forces="auto"`: elapsed about `62.67 s`
+        - all three reached the same objective `0.11275462826693917`;
+      - practical conclusion:
+        - the force-kernel JIT setting matters materially on the exact QH path;
+        - the teaching script now sets `jit_forces=True` explicitly for the
+          QH exact Gauss-Newton workflow.

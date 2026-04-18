@@ -143,6 +143,16 @@ def test_vmec_jax_can_select_discrete_adjoint_backend():
     assert vmec._residual_derivative_backend == "discrete_adjoint"
 
 
+def test_vmec_jax_can_override_jit_forces():
+    vmec = VmecJax(_input_filename(), verbose=False)
+    vmec.set_solver_options(jit_forces=True)
+    assert vmec._jit_forces is True
+    vmec.set_solver_options(jit_forces=False)
+    assert vmec._jit_forces is False
+    vmec.set_solver_options(jit_forces="auto")
+    assert vmec._jit_forces == "auto"
+
+
 def test_vmec_jax_wrapper_keeps_unconstrained_boundary_coefficients():
     vmec = VmecJax(_input_filename(), verbose=False)
     vmec.indata.mpol = 3
