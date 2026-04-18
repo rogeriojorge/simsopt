@@ -927,7 +927,7 @@ class VmecJax:
             chunk[np.arange(width), start + np.arange(width)] = 1.0
             return width, jnp.asarray(chunk, dtype=x_free.dtype)
 
-        column_chunks = []
+        jacobian = None
         for start in range(0, n_free, jac_chunk):
             width, directions = _direction_chunk(start)
             packed_tangents0 = helper_cache["initial_tangent_columns"](
@@ -941,9 +941,14 @@ class VmecJax:
                 rebuild_preconditioner=True,
             )
             chunk_columns = helper_cache["residual_tangent_columns"](packed_final, packed_tangents)
-            column_chunks.append(np.asarray(chunk_columns[:width], dtype=float))
+            chunk_np = np.asarray(chunk_columns[:width], dtype=float)
+            if jacobian is None:
+                jacobian = np.empty((chunk_np.shape[1], n_free), dtype=float)
+            jacobian[:, start : start + width] = chunk_np.T
 
-        return np.concatenate(column_chunks, axis=0).T
+        if jacobian is None:
+            return np.empty((0, n_free), dtype=float)
+        return jacobian
 
     def _solve_state_residual_forward(self, x_free, *, step_size: float):
         from vmec_jax.solve import solve_fixed_boundary_residual_iter

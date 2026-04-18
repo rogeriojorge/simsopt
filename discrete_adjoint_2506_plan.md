@@ -846,3 +846,25 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
           - no, on the present QH MPI FD workflow it is still not a practical
             fallback, because the full callback cost (accelerated solve + QS
             residual assembly + per-rank warmup) remains too high.
+    - exact mode-2 memory pass on 2026-04-17:
+      - added automatic replay-column chunking on the vmec_jax side and
+        switched the simsopt exact Jacobian assembly to fill a preallocated
+        output matrix instead of collecting all column chunks in a Python list;
+      - targeted replay and wrapper Jacobian regressions stayed green after
+        that change;
+      - exact `max_mode=2` Jacobian at `x0` on the current branch now measures:
+        - shape `(44353, 24)`,
+        - wall time about `30.56 s`,
+        - max RSS about `5.43 GB`,
+        - peak footprint about `4.91 GB`;
+      - exact `max_mode=2`, `max_nfev=3` full run on the same code path still
+        takes a zero step:
+        - initial total objective `0.30024580360290376`,
+        - final total objective unchanged at `0.30024580360290376`,
+        - wall time about `90.47 s`,
+        - max RSS about `21.48 GB`,
+        - peak footprint about `25.17 GB`;
+      - conclusion:
+        - the memory reduction is real and useful;
+        - the remaining blocker for `max_mode=2` is now outer-solver behavior
+          on the exact Jacobian path, not another gross memory blow-up.
