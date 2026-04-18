@@ -965,3 +965,32 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - the force-kernel JIT setting matters materially on the exact QH path;
         - the teaching script now sets `jit_forces=True` explicitly for the
           QH exact Gauss-Newton workflow.
+    - forward-only line-search residual split on 2026-04-18:
+      - the next profile showed that the concrete exact Gauss-Newton loop was
+        still using the payload-building exact residual callback for every
+        backtracking trial point;
+      - that meant line search was paying for full tape construction even
+        though no Jacobian was needed on those trial points;
+      - fixed this by exposing `scipy_forward_residuals` from
+        `build_vmec_objective_stage(...)` and routing the concrete GN line
+        search through `vmec.solve_state_for_objective(...)` instead of the
+        exact payload path;
+      - added wrapper regression coverage proving the forward-only residual
+        path does not call `_solve_state_discrete_adjoint_residual(...)` and
+        still matches the exact residual at the same point;
+      - measured exact `max_mode=2`, `max_nfev=2` after the split:
+        - final estimated total objective unchanged at `0.06204404247373875`;
+        - elapsed about `101.40 s`;
+        - max RSS about `13.47 GB` instead of about `20.28 GB`;
+        - line-search wall time dropped from about `60.26 s` to about
+          `44.37 s`;
+      - measured exact `max_mode=2`, `max_nfev=3` after the split:
+        - streamed cost reached the third accepted step (`3.102202e-02`) on
+          the improved path;
+        - max RSS dropped to about `17.50 GB` from the earlier
+          `22.47 GB` run before the process was killed late in the solve;
+      - conclusion:
+        - the forward-only split is a real and safe memory/runtime win;
+        - the next remaining bottleneck is the post-step exact work and
+          general long-run memory retention once the optimizer is already
+          descending well.

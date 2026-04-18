@@ -475,9 +475,14 @@ def build_vmec_objective_stage(
                 scipy_callback_cache["residual"],
             )
 
+        def scipy_forward_residuals(x_free):
+            state = vmec.solve_state_for_objective(x_free)
+            return np.asarray(residuals_from_state(state), dtype=float)
+
         residuals.scipy_residuals = scipy_residuals
         residuals.scipy_jacobian = scipy_jacobian
         residuals.scipy_state_payload = scipy_state_payload
+        residuals.scipy_forward_residuals = scipy_forward_residuals
 
     return VmecObjectiveStage(
         x0=x0,
@@ -673,6 +678,7 @@ def least_squares_jax_solve(
     step_description = None
     scipy_jacobian_override = getattr(residual_fun, "scipy_jacobian", None)
     scipy_residuals_override = getattr(residual_fun, "scipy_residuals", None)
+    scipy_forward_residuals_override = getattr(residual_fun, "scipy_forward_residuals", None)
 
     def residuals_numpy(y_np):
         y_arr = jnp.asarray(y_np, dtype=y0.dtype)
@@ -702,6 +708,19 @@ def least_squares_jax_solve(
         residual_np = residuals_numpy(y_np)
         return 0.5 * float(np.dot(residual_np, residual_np)), residual_np
 
+    def objective_numpy_forward(y_np):
+        if callable(scipy_forward_residuals_override):
+            residual_np = _profiled_numpy_call(
+                profile_data,
+                "residual_calls",
+                "residual_wall_s",
+                lambda arr: np.asarray(scipy_forward_residuals_override(arr * scale)),
+                jnp.asarray(y_np, dtype=y0.dtype),
+            )
+        else:
+            residual_np = residuals_numpy(y_np)
+        return 0.5 * float(np.dot(residual_np, residual_np)), residual_np
+
     def accept_by_backtracking_numpy(y_np, cost_np, grad_np, direction_np, *, initial_step=1.0, c1=1e-4, max_trials=12):
         start = time.perf_counter()
         best_y = np.asarray(y_np, dtype=float)
@@ -718,7 +737,7 @@ def least_squares_jax_solve(
         for trial_idx in range(int(max_trials)):
             alpha = float(initial_step) * (0.5 ** trial_idx)
             trial_y = np.asarray(y_np, dtype=float) + alpha * np.asarray(direction_np, dtype=float)
-            trial_cost, trial_residual = objective_numpy(trial_y)
+            trial_cost, trial_residual = objective_numpy_forward(trial_y)
             eval_count += 1
             if trial_cost < best_cost:
                 best_y = trial_y

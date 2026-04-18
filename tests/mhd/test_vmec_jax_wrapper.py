@@ -462,6 +462,53 @@ def test_vmec_jax_solve_state_for_objective_uses_forward_residual_path():
     np.testing.assert_allclose(np.asarray(vj.pack_state(state_report)), np.asarray(vj.pack_state(state_forward)))
 
 
+def test_vmec_jax_discrete_backend_exposes_forward_only_residuals():
+    vmec = VmecJax(_input_filename(), verbose=False)
+    vmec.indata.mpol = 3
+    vmec.indata.ntor = 3
+    vmec.set_solver_options(
+        solver="vmec2000",
+        max_iter=1,
+        grad_tol=1.0e-13,
+        residual_derivative_backend="discrete_adjoint",
+    )
+
+    surf = vmec.boundary
+    surf.fix_all()
+    surf.fixed_range(mmin=0, mmax=1, nmin=-1, nmax=1, fixed=False)
+    surf.fix("rc(0,0)")
+
+    stage = build_vmec_objective_stage(
+        vmec,
+        max_mode=1,
+        objective_tuples=[("aspect", 7.0, 1.0), ("qs", 0.0, 1.0)],
+        surfaces=np.arange(0, 1.01, 0.1),
+        helicity_m=1,
+        helicity_n=-1,
+        x_scale_alpha=1.2,
+        x_scale_min=1e-9,
+    )
+    x0 = jax.numpy.asarray(stage.x0, dtype=jax.numpy.float64)
+
+    solve_calls = {"count": 0}
+    original = vmec._solve_state_discrete_adjoint_residual
+
+    def counted_solve(*args, **kwargs):
+        solve_calls["count"] += 1
+        return original(*args, **kwargs)
+
+    vmec._solve_state_discrete_adjoint_residual = counted_solve
+    try:
+        residual_forward = np.asarray(stage.residuals.scipy_forward_residuals(x0))
+    finally:
+        vmec._solve_state_discrete_adjoint_residual = original
+
+    residual_exact = np.asarray(stage.residuals.scipy_residuals(x0))
+
+    assert solve_calls["count"] == 0
+    np.testing.assert_allclose(residual_forward, residual_exact)
+
+
 def test_vmec_jax_discrete_backend_qh_jacobian_matches_moving_axis_fd():
     if os.environ.get("RUN_SLOW", "") != "1":
         raise unittest.SkipTest("Set RUN_SLOW=1 to run slow discrete-adjoint QH checks")
