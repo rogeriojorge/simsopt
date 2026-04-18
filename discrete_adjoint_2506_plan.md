@@ -822,3 +822,27 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
           fallback is not attractive on the current branch;
         - the exact discrete-adjoint route remains the only credible path to
           ship.
+    - accelerated-MPI finite-difference follow-up on 2026-04-17:
+      - user asked whether the MPI FD fallback could at least use the same
+        warmed accelerated primal path reported in the vmec_jax README/runtime
+        matrix;
+      - the script was then refactored so its forward evaluations no longer go
+        through the conservative `VmecJax._solve_state(...)` residual path;
+        instead it now:
+        - writes an input override for the current boundary point,
+        - calls `vmec_jax.run_fixed_boundary(..., solver_mode="accelerated")`,
+        - computes aspect/QS residuals from the returned solved state,
+        - caches the same-`x` state/residual/objective so the classic MPI
+          callback pattern does not pay three solves per function evaluation;
+      - measured result on `mpirun -n 2` with `max_nfev=1`:
+        - cold accelerated run still did not finish the initial warm-up
+          objective within `120 s`;
+        - a warmed rerun in the same environment again did not finish the
+          initial warm-up objective within `120 s`;
+      - practical conclusion:
+        - the answer to the user’s aside is now stricter:
+          - yes, accelerated warm vmec_jax can be used in principle for outer
+            finite differences;
+          - no, on the present QH MPI FD workflow it is still not a practical
+            fallback, because the full callback cost (accelerated solve + QS
+            residual assembly + per-rank warmup) remains too high.
