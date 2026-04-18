@@ -912,3 +912,36 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
           `max_mode=1` and `max_mode=2` under a non-SciPy outer solver;
         - the remaining bottleneck is runtime and memory survival on longer
           exact runs, not the old zero-step failure.
+    - concrete exact line-search reuse pass on 2026-04-18:
+      - after the concrete exact Gauss-Newton branch was working, profiling
+        showed that line-search residual evaluations dominated wall time;
+      - the next local fix was to carry:
+        - the residual already computed at the accepted backtracking point into
+          the next Gauss-Newton iteration, avoiding a duplicate exact residual
+          solve at the same `y`;
+        - the last accepted line-search scale into the next iteration so the
+          concrete exact backtracking does not restart from a full step every
+          time;
+      - measured exact `max_mode=2` results after that change:
+        - `max_nfev=2`,
+          `VMEC_JAX_DYNAMIC_REPLAY_BUCKET=1024`,
+          `VMEC_JAX_REPLAY_COLUMN_CHUNK=12`:
+          - final estimated total objective `0.06204404247373875`,
+          - elapsed about `94.89 s`,
+          - residual calls reduced from `6` to `5`,
+          - line-search calls reduced from `5` to `4`;
+        - `max_nfev=3` on the same path:
+          - final estimated total objective `0.06031229007845647`,
+          - elapsed about `213.91 s`,
+          - max RSS about `22.47 GB`,
+          - peak footprint about `59.04 GB`;
+      - comparison against the classic reference supplied by the user:
+        - classic `max_mode=2`, `nfev=3` reached total objective about
+          `0.102316`;
+        - exact JAX Gauss-Newton is now materially better at the same early
+          stop, reaching about `0.0603123`;
+      - conclusion:
+        - quality is no longer the blocker on early `max_mode=2`;
+        - the remaining blocker is long-run exact memory/runtime, especially
+          peak executable/footprint retention once the optimizer is actually
+          moving.

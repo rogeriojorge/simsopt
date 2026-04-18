@@ -706,9 +706,11 @@ def least_squares_jax_solve(
         start = time.perf_counter()
         best_y = np.asarray(y_np, dtype=float)
         best_cost = float(cost_np)
+        best_residual = None
         best_idx = -1
         accepted_y = best_y
         accepted_cost = best_cost
+        accepted_residual = None
         accepted_idx = -1
         accepted = False
         eval_count = 0
@@ -716,15 +718,17 @@ def least_squares_jax_solve(
         for trial_idx in range(int(max_trials)):
             alpha = float(initial_step) * (0.5 ** trial_idx)
             trial_y = np.asarray(y_np, dtype=float) + alpha * np.asarray(direction_np, dtype=float)
-            trial_cost, _ = objective_numpy(trial_y)
+            trial_cost, trial_residual = objective_numpy(trial_y)
             eval_count += 1
             if trial_cost < best_cost:
                 best_y = trial_y
                 best_cost = trial_cost
+                best_residual = trial_residual
                 best_idx = trial_idx
             if trial_cost <= float(cost_np) + float(c1) * alpha * directional_derivative:
                 accepted_y = trial_y
                 accepted_cost = trial_cost
+                accepted_residual = trial_residual
                 accepted_idx = trial_idx
                 accepted = True
                 break
@@ -746,6 +750,8 @@ def least_squares_jax_solve(
             step_label,
             bool(accepted or best_cost < float(cost_np)),
             int(eval_count),
+            accepted_residual if accepted else best_residual,
+            float(initial_step) * (0.5 ** trial_idx_int) if trial_idx_int >= 0 else float(initial_step),
         )
 
     if method in ("scipy", "least_squares"):
@@ -823,13 +829,19 @@ def least_squares_jax_solve(
         y = y0
         previous_cost = None
         previous_y = None
+        carried_residual_np = None
+        line_search_initial_step = 1.0
         for iteration in range(int(max_nfev)):
             if _deadline_exhausted(deadline):
                 wall_clock_exhausted = True
                 status = 2
                 break
             if callable(scipy_residuals_override) and callable(scipy_jacobian_override) and jac_mode in ("jax", "auto"):
-                residual_np = residuals_numpy(np.asarray(y, dtype=float))
+                if carried_residual_np is None:
+                    residual_np = residuals_numpy(np.asarray(y, dtype=float))
+                else:
+                    residual_np = carried_residual_np
+                    carried_residual_np = None
                 J_np = jac_numpy(np.asarray(y, dtype=float))
                 cost_current = float(0.5 * np.dot(residual_np, residual_np))
                 grad_np = J_np.T @ residual_np
@@ -866,15 +878,17 @@ def least_squares_jax_solve(
                     break
             direction = jnp.asarray(step_np, dtype=y.dtype)
             if callable(scipy_residuals_override) and callable(scipy_jacobian_override) and jac_mode in ("jax", "auto"):
-                y_trial, cost_trial, step_description, accepted, eval_count = accept_by_backtracking_numpy(
+                y_trial, cost_trial, step_description, accepted, eval_count, accepted_residual_np, accepted_step_scale = accept_by_backtracking_numpy(
                     np.asarray(y, dtype=float),
                     cost_current,
                     grad_np,
                     np.asarray(direction, dtype=float),
-                    initial_step=1.0,
+                    initial_step=line_search_initial_step,
                 )
                 if profile_data is not None:
                     profile_data["backtrack_trial_calls"] += eval_count
+                carried_residual_np = accepted_residual_np
+                line_search_initial_step = max(min(accepted_step_scale, 1.0), 1e-6)
             else:
                 cost_current_jnp = jnp.asarray(cost_current, dtype=y.dtype)
                 y_trial, cost_trial, step_description, accepted = accept_by_backtracking(y, cost_current_jnp, grad, direction)
