@@ -1012,3 +1012,27 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - standalone vmec_jax exact example work is now unblocked by the new
           vmec_jax-side QS API, and the remaining work stays focused on
           runtime/memory rather than missing diagnostics.
+    - quasisymmetry deduplication follow-up on 2026-04-18:
+      - removed the duplicated JAX quasisymmetry formula from
+        `src/simsopt/mhd/vmec_diagnostics_jax.py`;
+      - simsopt now keeps only the SIMSOPT-facing API surface there and
+        delegates all actual QS calculations to the single vmec_jax
+        implementation in `vmec_jax.quasisymmetry`;
+      - `VmecJax.quasisymmetry_diagnostics_from_state_jax(...)` was also
+        simplified to call the vmec_jax implementation directly instead of
+        carrying a second copy of the state-to-diagnostics logic;
+      - the first version of that dedup exposed a real production issue:
+        `vmec_jax.quasisymmetry._as_jax_array(...)` used unconditional
+        `np.asarray(...)`, which broke the exact Jacobian path with
+        `TracerArrayConversionError`;
+      - fixed the coercion helper centrally in vmec_jax and added a tracer
+        safety regression there;
+      - validation after the fix:
+        - simsopt wrapper/diagnostic tests still pass;
+        - the exact `max_mode=2` production probe again takes the first GN
+          step and reaches cost `5.637731e-02`, confirming the shared QS path
+          is now production-safe;
+      - conclusion:
+        - quasisymmetry now has a single implementation in vmec_jax;
+        - simsopt is reduced to a thin consumer/wrapper layer, which is the
+          right ownership boundary for future maintenance.
