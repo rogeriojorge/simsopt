@@ -427,6 +427,15 @@ class VmecJax:
         if reset_warm_start and self._context is not None and self._context_seed_guess is not None:
             self._context.st_guess = _clone_state(self._context_seed_guess)
 
+    def clear_exact_caches(self) -> None:
+        """Clear exact-Jacobian helper caches without dropping warm-start state."""
+        self._discrete_jacobian_helper_cache = {}
+        self._cached_wout = None
+        self._cached_run = None
+        clear_replay = getattr(vj, "clear_replay_scan_caches", None)
+        if callable(clear_replay):
+            clear_replay()
+
     def _invalidate_runtime(self) -> None:
         """Invalidate stateful runtime caches that depend on static setup."""
         self._context_dirty = True

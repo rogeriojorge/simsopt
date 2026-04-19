@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import gc
 import math
+import os
 import re
 import time
 from types import SimpleNamespace
@@ -484,6 +486,7 @@ def build_vmec_objective_stage(
         residuals.scipy_state_payload = scipy_state_payload
         residuals.scipy_forward_residuals = scipy_forward_residuals
         residuals.scipy_clear_callback_cache = _clear_scipy_callback_cache
+        residuals.scipy_clear_exact_caches = vmec.clear_exact_caches
 
     return VmecObjectiveStage(
         x0=x0,
@@ -681,6 +684,28 @@ def least_squares_jax_solve(
     scipy_residuals_override = getattr(residual_fun, "scipy_residuals", None)
     scipy_forward_residuals_override = getattr(residual_fun, "scipy_forward_residuals", None)
     scipy_clear_callback_cache = getattr(residual_fun, "scipy_clear_callback_cache", None)
+    scipy_clear_exact_caches = getattr(residual_fun, "scipy_clear_exact_caches", None)
+
+    def _should_clear_exact_caches() -> bool:
+        env = os.environ.get("SIMSOPT_EXACT_GN_CLEAR_CACHES", "").strip().lower()
+        if env in ("1", "true", "yes", "on"):
+            return True
+        if env in ("0", "false", "no", "off"):
+            return False
+        return callable(scipy_clear_exact_caches) and int(y0.size) >= 16
+
+    clear_exact_caches_each_iter = _should_clear_exact_caches()
+
+    def _clear_exact_runtime_caches():
+        if callable(scipy_clear_callback_cache):
+            scipy_clear_callback_cache()
+        if callable(scipy_clear_exact_caches):
+            scipy_clear_exact_caches()
+        try:
+            jax.clear_caches()
+        except Exception:
+            pass
+        gc.collect()
 
     def residuals_numpy(y_np):
         y_arr = jnp.asarray(y_np, dtype=y0.dtype)
@@ -922,6 +947,8 @@ def least_squares_jax_solve(
             previous_cost = cost_current
             y = y_trial
             cost = cost_trial
+            if clear_exact_caches_each_iter:
+                _clear_exact_runtime_caches()
     elif method == "trust_region":
         y = y0
         cost = objective_y(y)

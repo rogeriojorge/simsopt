@@ -1058,3 +1058,40 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - the remaining long-run resource problem is still dominated by the
           Jacobian/replay/compile side rather than a single stale callback
           payload.
+    - exact GN cache-clear / JAX best-practice follow-up on 2026-04-18:
+      - checked current JAX guidance on compilation-cache and memory control:
+        - `jax.clear_caches()` clears compilation/staging caches;
+        - persistent compilation cache is the recommended way to avoid paying
+          full recompilation again after cache eviction;
+      - the codebase already enables vmec_jax persistent compilation cache,
+        so the next practical step was to make the exact mode-2 GN path clear
+        local and JAX caches between accepted iterations;
+      - implemented:
+        - `vmec.clear_exact_caches()` to drop the wrapper’s exact Jacobian
+          helper cache and replay-runner references while preserving the warm
+          accepted state;
+        - `vmec_jax.clear_replay_scan_caches()` to release replay-scan runner
+          references;
+        - exact GN now auto-clears caches for large concrete exact problems
+          (`nvar >= 16`), with override via
+          `SIMSOPT_EXACT_GN_CLEAR_CACHES`;
+      - validation:
+        - solve/unit tests passed after the change;
+      - measured exact `max_mode=2`, `max_nfev=2`:
+        - same final total objective `0.06204404247373875`;
+        - elapsed about `142.37 s`;
+        - max RSS about `11.57 GB` (down materially from the earlier exact
+          path);
+        - peak footprint about `27.93 GB`;
+      - measured exact `max_mode=2`, `max_nfev=3` with
+        `VMEC_JAX_REPLAY_COLUMN_CHUNK=12`:
+        - still terminated late before clean completion;
+        - elapsed about `239.90 s`;
+        - max RSS about `17.46 GB` (still materially lower than the older
+          `~22.47 GB` regime);
+        - peak footprint still reached about `58.75 GB`;
+      - conclusion:
+        - cache clearing is the first change that substantially bends the live
+          RSS curve on the exact mode-2 path;
+        - the remaining blocker is now late-run peak footprint / executable
+          accumulation beyond the caches we directly control.
