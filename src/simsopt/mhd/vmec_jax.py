@@ -43,6 +43,8 @@ _OUTER_OPTIMIZATION_PROFILES = {
     "qh": {
         "residual_adjoint_mode": "chunked",
         "stateless_evaluations": False,
+        "forward_trial_max_iter": 600,
+        "forward_trial_grad_tol": 1e-10,
     },
 }
 
@@ -415,6 +417,8 @@ class VmecJax:
         self._residual_tangent_mode = "opaque"
         self._stateless_evaluations = False
         self._jit_forces = "auto"
+        self._forward_trial_max_iter = None
+        self._forward_trial_grad_tol = None
         self._reset_caches()
 
     def _reset_caches(self, *, reset_warm_start: bool = False) -> None:
@@ -548,6 +552,8 @@ class VmecJax:
         residual_tangent_mode: str | None = None,
         stateless_evaluations: bool | None = None,
         jit_forces: bool | str | None = None,
+        forward_trial_max_iter: int | None = None,
+        forward_trial_grad_tol: float | None = None,
     ) -> None:
         """Update VMEC-JAX solver controls used by this wrapper."""
         if max_iter is not None:
@@ -662,6 +668,14 @@ class VmecJax:
             if jit_forces_store != self._jit_forces:
                 self._jit_forces = jit_forces_store
                 self._reset_caches(reset_warm_start=True)
+        if forward_trial_max_iter is not None:
+            forward_trial_max_iter = int(forward_trial_max_iter)
+            if forward_trial_max_iter != self._forward_trial_max_iter:
+                self._forward_trial_max_iter = forward_trial_max_iter
+        if forward_trial_grad_tol is not None:
+            forward_trial_grad_tol = float(forward_trial_grad_tol)
+            if forward_trial_grad_tol != self._forward_trial_grad_tol:
+                self._forward_trial_grad_tol = forward_trial_grad_tol
 
     def use_residual_autodiff_defaults(
         self,
@@ -922,7 +936,7 @@ class VmecJax:
             return np.empty((0, n_free), dtype=float)
         return jacobian
 
-    def _solve_state_residual_forward(self, x_free, *, step_size: float):
+    def _solve_state_residual_forward(self, x_free, *, step_size: float, max_iter: int | None = None, grad_tol: float | None = None):
         from vmec_jax.solve import solve_fixed_boundary_residual_iter
 
         self._ensure_context()
@@ -930,13 +944,15 @@ class VmecJax:
         st0 = vj.initial_guess_from_boundary(self._static, boundary, self._indata_raw, vmec_project=True)
         geom0 = vj.eval_geom(st0, self._static)
         signgs0 = vj.signgs_from_sqrtg(np.asarray(geom0.sqrtg), axis_index=1)
+        max_iter = int(self._max_iter if max_iter is None else max_iter)
+        grad_tol = float(self._grad_tol if grad_tol is None else grad_tol)
         res = solve_fixed_boundary_residual_iter(
             st0,
             self._static,
             indata=self._indata_raw,
             signgs=int(signgs0),
-            ftol=float(self._grad_tol),
-            max_iter=int(self._max_iter),
+            ftol=grad_tol,
+            max_iter=max_iter,
             step_size=float(step_size),
             vmec2000_control=True,
             reference_mode=False,
@@ -951,6 +967,28 @@ class VmecJax:
             resume_state_mode="full",
         )
         return _clone_state(res.state)
+
+    def solve_state_for_line_search(self, x_free=None):
+        """Return a forward-solved state for trial-point residual evaluations."""
+        if x_free is None:
+            x_free = self.boundary.get_free_params()
+        x_free = jnp.asarray(x_free, dtype=jnp.float64)
+        if (
+            str(self._residual_derivative_backend) == "discrete_adjoint"
+            and str(self._solver).strip().lower() in ("residual", "vmec2000")
+        ):
+            residual_step_size = (
+                float(self._step_size_override)
+                if self._step_size_override is not None
+                else float(self._indata_raw.get_float("DELT", 1.0))
+            )
+            return self._solve_state_residual_forward(
+                x_free,
+                step_size=residual_step_size,
+                max_iter=self._forward_trial_max_iter,
+                grad_tol=self._forward_trial_grad_tol,
+            )
+        return self.solve_state_for_objective(x_free)
 
     def solve_state_for_objective(self, x_free=None):
         """Return a solved state for objective reporting on the current wrapper path.

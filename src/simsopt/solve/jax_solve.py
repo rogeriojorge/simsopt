@@ -478,7 +478,11 @@ def build_vmec_objective_stage(
             )
 
         def scipy_forward_residuals(x_free):
-            state = vmec.solve_state_for_objective(x_free)
+            solve_state_for_line_search = getattr(vmec, "solve_state_for_line_search", None)
+            if callable(solve_state_for_line_search):
+                state = solve_state_for_line_search(x_free)
+            else:
+                state = vmec.solve_state_for_objective(x_free)
             return np.asarray(residuals_from_state(state), dtype=float)
 
         residuals.scipy_residuals = scipy_residuals

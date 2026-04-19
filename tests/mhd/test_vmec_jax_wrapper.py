@@ -462,6 +462,37 @@ def test_vmec_jax_solve_state_for_objective_uses_forward_residual_path():
     np.testing.assert_allclose(np.asarray(vj.pack_state(state_report)), np.asarray(vj.pack_state(state_forward)))
 
 
+def test_vmec_jax_solve_state_for_line_search_uses_forward_trial_overrides():
+    vmec = VmecJax(_input_filename(), verbose=False)
+    vmec.indata.mpol = 3
+    vmec.indata.ntor = 3
+    vmec.set_solver_options(
+        solver="vmec2000",
+        max_iter=5,
+        grad_tol=1.0e-13,
+        residual_derivative_backend="discrete_adjoint",
+        forward_trial_max_iter=1,
+        forward_trial_grad_tol=1.0e-8,
+    )
+
+    surf = vmec.boundary
+    surf.fix_all()
+    surf.fixed_range(mmin=0, mmax=1, nmin=-1, nmax=1, fixed=False)
+    surf.fix("rc(0,0)")
+    x0 = jax.numpy.asarray(surf.get_free_params(), dtype=jax.numpy.float64)
+    step_size = float(vmec._indata_raw.get_float("DELT", 1.0))
+
+    state_trial = vmec.solve_state_for_line_search(x0)
+    state_forward = vmec._solve_state_residual_forward(
+        x0,
+        step_size=step_size,
+        max_iter=1,
+        grad_tol=1.0e-8,
+    )
+
+    np.testing.assert_allclose(np.asarray(vj.pack_state(state_trial)), np.asarray(vj.pack_state(state_forward)))
+
+
 def test_vmec_jax_discrete_backend_exposes_forward_only_residuals():
     vmec = VmecJax(_input_filename(), verbose=False)
     vmec.indata.mpol = 3
@@ -507,6 +538,49 @@ def test_vmec_jax_discrete_backend_exposes_forward_only_residuals():
 
     assert solve_calls["count"] == 0
     np.testing.assert_allclose(residual_forward, residual_exact)
+
+
+def test_vmec_jax_discrete_backend_forward_residuals_use_line_search_solver():
+    vmec = VmecJax(_input_filename(), verbose=False)
+    vmec.indata.mpol = 3
+    vmec.indata.ntor = 3
+    vmec.set_solver_options(
+        solver="vmec2000",
+        max_iter=5,
+        grad_tol=1.0e-13,
+        residual_derivative_backend="discrete_adjoint",
+        forward_trial_max_iter=1,
+        forward_trial_grad_tol=1.0e-8,
+    )
+
+    surf = vmec.boundary
+    surf.fix_all()
+    surf.fixed_range(mmin=0, mmax=1, nmin=-1, nmax=1, fixed=False)
+    surf.fix("rc(0,0)")
+
+    stage = build_vmec_objective_stage(
+        vmec,
+        max_mode=1,
+        objective_tuples=[("aspect", 7.0, 1.0), ("qs", 0.0, 1.0)],
+        surfaces=np.arange(0, 1.01, 0.1),
+        helicity_m=1,
+        helicity_n=-1,
+        x_scale_alpha=1.2,
+        x_scale_min=1e-9,
+    )
+    x0 = jax.numpy.asarray(stage.x0, dtype=jax.numpy.float64)
+    step_size = float(vmec._indata_raw.get_float("DELT", 1.0))
+
+    residual_forward = np.asarray(stage.residuals.scipy_forward_residuals(x0))
+    state_trial = vmec._solve_state_residual_forward(
+        x0,
+        step_size=step_size,
+        max_iter=1,
+        grad_tol=1.0e-8,
+    )
+    residual_trial = np.asarray(stage.extras["residuals_from_state"](state_trial), dtype=float)
+
+    np.testing.assert_allclose(residual_forward, residual_trial)
 
 
 def test_vmec_jax_discrete_backend_qh_jacobian_matches_moving_axis_fd():

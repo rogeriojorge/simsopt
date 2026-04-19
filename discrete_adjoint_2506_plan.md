@@ -1170,3 +1170,52 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - but it is not sufficient to solve late completion by itself;
         - the remaining blocker is still broader late-run executable/buffer
           retention beyond the local caches we directly control.
+    - exact mode-2 forward-trial relaxation audit on 2026-04-19:
+      - audited the exact production mode-2 path at the wrapper/payload level
+        and found that the exact solve at `x0` was saturating the full inner
+        budget:
+        - checkpoint tape length `1500`;
+        - replay bucket length `1500`;
+        - `precond_jmax = 30`;
+        - matching the current `input.nfp4_QH_warm_start` settings
+          `NITER_ARRAY = 1500` and `FTOL_ARRAY = 1.0E-13`;
+      - rejected experiment:
+        - relaxing the full exact solve itself was not acceptable:
+          - `max_iter=600`, `grad_tol=1e-10` cut wall time but degraded the
+            2-eval mode-2 cost back to about `6.08e-02`;
+          - `max_iter=1000`, `grad_tol=1e-12` was worse in both runtime and
+            quality;
+      - accepted fix:
+        - kept the exact Jacobian / accepted-step solve at the original tight
+          settings, but added a separate forward-only line-search solve path
+          for trial residual evaluations;
+        - the QH outer-optimization profile now uses:
+          - `forward_trial_max_iter = 600`;
+          - `forward_trial_grad_tol = 1e-10`;
+        - `build_vmec_objective_stage(...).scipy_forward_residuals` now calls
+          `VmecJax.solve_state_for_line_search(...)` when available, so only
+          line-search trial points use the relaxed forward solve;
+      - measured effect:
+        - exact mode-2, `max_nfev=2`, with the forward-only trial relaxation:
+          - cost stayed essentially unchanged (`~3.11e-02`);
+          - wall time dropped materially versus the earlier exact line-search
+            path (`~71 s` in the direct audit runner);
+          - max RSS dropped to about `17.61 GB`;
+          - peak footprint dropped to about `16.24 GB`;
+        - exact mode-2, `max_nfev=3`, in the direct audit runner:
+          - finished cleanly at cost about `2.93862e-02`
+            (total objective about `5.87724e-02`);
+          - elapsed about `117.86 s`;
+          - max RSS about `20.73 GB`;
+          - peak footprint about `31.60 GB`;
+        - first in-tree production rerun:
+          - still terminated late before clean completion;
+          - but the live RSS curve was materially healthier during the late
+            phase, spending much of the run in the `~14.6-17.1 GB` range and
+            dropping back down later instead of climbing monotonically;
+      - conclusion:
+        - relaxing only the forward line-search residual solves is the first
+          mode-2 late-run fix in this pass that materially improves runtime
+          and live memory without degrading the exact derivative path;
+        - it should be kept as the new baseline while the remaining late-run
+          abnormal termination is traced further.
