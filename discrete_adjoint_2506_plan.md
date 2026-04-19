@@ -1133,3 +1133,40 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
         - but they do not solve late completion;
         - the next runtime target remains deeper retracing / retention inside
           vmec_jax hot functions, especially replay and preconditioner internals.
+    - exact mode-2 preconditioner-cache follow-up on 2026-04-18:
+      - the compile audit continued to point at `preconditioner_1d_jax.py` as
+        the largest remaining local retrace cluster on the exact mode-2 path;
+      - implemented a vmec_jax-side local retention control there:
+        - bounded the lambda-preconditioner JIT cache with an LRU policy via
+          `VMEC_JAX_PRECOND_CACHE_LIMIT` (default `16`);
+        - added `clear_preconditioner_jit_caches()` in vmec_jax;
+        - routed `VmecJax.clear_exact_caches()` through that hook so the large
+          exact GN path now clears preconditioner-local executable references
+          alongside the wrapper payload caches;
+      - also fixed a related tracer-safety gap in `vmec_jax.profiles`:
+        - `_power_series(...)` and `_pcurr_power_series_ip(...)` now prefer
+          NumPy coefficients when possible but fall back to JAX arrays for
+          traced coefficient inputs;
+        - added a regression for traced power-series profiles;
+      - rejected experiment:
+        - a cached `polflux_deriv` helper in `energy.py` was prototyped after
+          the profiles fix, but it did not reduce the exact mode-2 miss count
+          and was reverted;
+      - measured effect on exact mode-2:
+        - bounded 2-eval production probe:
+          - same accepted trajectory and final total objective
+            `0.06204404247373875`;
+          - elapsed about `94.19 s`;
+          - max RSS about `19.78 GB`;
+          - peak footprint about `27.99 GB`;
+        - 3-eval production probe with the new preconditioner cache clear:
+          - still terminated late before clean completion;
+          - elapsed about `170.76 s`;
+          - max RSS about `21.17 GB`;
+          - peak footprint about `56.52 GB`;
+      - conclusion:
+        - the preconditioner-cache clear is safe and now part of the exact
+          cache-clear path;
+        - but it is not sufficient to solve late completion by itself;
+        - the remaining blocker is still broader late-run executable/buffer
+          retention beyond the local caches we directly control.
