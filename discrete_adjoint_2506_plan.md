@@ -1219,3 +1219,36 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
           and live memory without degrading the exact derivative path;
         - it should be kept as the new baseline while the remaining late-run
           abnormal termination is traced further.
+    - exact mode-2 late-run teardown audit on 2026-04-19:
+      - after the forward-trial split, the exact mode-2 path still appeared to
+        die late, but a crash-only runner showed the key detail:
+        - the optimization itself now returns a result at `nfev=3`;
+        - the hard failure happens after the result is printed, during late
+          runtime teardown / retained-state cleanup;
+        - the raw exit code from the crash-only runner was `137`;
+      - additional accepted line-search/runtime fixes:
+        - the QH forward-trial path now uses `forward_trial_jit_forces=False`
+          while keeping the exact Jacobian path on `jit_forces=True`;
+        - the concrete exact GN loop now predicts the next initial
+          backtracking step for large exact problems by halving the accepted
+          step scale when the previous line search needed more than one trial;
+        - `least_squares_jax_solve(...)` now performs a final exact-runtime
+          cache clear on return for large concrete exact GN problems, with
+          `SIMSOPT_EXACT_GN_FINAL_CLEAR` available as an override;
+      - measured effect:
+        - mode-2, `nfev=2`, profile run:
+          - line-search trial calls dropped from `4` to `3`;
+          - line-search wall time dropped from about `45.24 s` to about
+            `27.67 s`;
+        - mode-2, `nfev=3`, crash-only runner after the final-clear fix:
+          - returned the optimization result cleanly with `EXIT:0`;
+          - final cost about `3.0156145e-02`
+            (total objective about `6.0312290e-02`);
+          - last accepted step label still `bt_4`, so later exact steps remain
+            expensive, but they no longer force a hard kill at process exit;
+      - conclusion:
+        - the remaining late-run blocker was not solely “memory during the
+          solve”; it also included retained exact runtime state at solver
+          return / interpreter teardown;
+        - explicit final exact-runtime cleanup is now part of the exact GN
+          baseline and should remain there while longer mode-2 runs are pushed.

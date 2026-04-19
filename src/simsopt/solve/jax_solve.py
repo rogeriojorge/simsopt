@@ -711,6 +711,14 @@ def least_squares_jax_solve(
             pass
         gc.collect()
 
+    def _should_clear_exact_caches_on_return() -> bool:
+        env = os.environ.get("SIMSOPT_EXACT_GN_FINAL_CLEAR", "").strip().lower()
+        if env in ("1", "true", "yes", "on"):
+            return True
+        if env in ("0", "false", "no", "off"):
+            return False
+        return callable(scipy_clear_exact_caches) and int(y0.size) >= 16
+
     def residuals_numpy(y_np):
         y_arr = jnp.asarray(y_np, dtype=y0.dtype)
         if callable(scipy_residuals_override):
@@ -940,7 +948,10 @@ def least_squares_jax_solve(
                 if profile_data is not None:
                     profile_data["backtrack_trial_calls"] += eval_count
                 carried_residual_np = accepted_residual_np
-                line_search_initial_step = max(min(accepted_step_scale, 1.0), 1e-6)
+                next_initial_step = accepted_step_scale
+                if int(y0.size) >= 16 and int(eval_count) > 1:
+                    next_initial_step = accepted_step_scale * 0.5
+                line_search_initial_step = max(min(next_initial_step, 1.0), 1e-6)
             else:
                 cost_current_jnp = jnp.asarray(cost_current, dtype=y.dtype)
                 y_trial, cost_trial, step_description, accepted = accept_by_backtracking(y, cost_current_jnp, grad, direction)
@@ -1188,6 +1199,8 @@ def least_squares_jax_solve(
         wall_clock_exhausted = True
 
     x_opt = np.asarray(y * scale)
+    if method == "gauss_newton" and _should_clear_exact_caches_on_return():
+        _clear_exact_runtime_caches()
     return {
         "x": x_opt,
         "status": int(status),

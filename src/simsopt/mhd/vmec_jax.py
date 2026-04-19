@@ -45,6 +45,7 @@ _OUTER_OPTIMIZATION_PROFILES = {
         "stateless_evaluations": False,
         "forward_trial_max_iter": 600,
         "forward_trial_grad_tol": 1e-10,
+        "forward_trial_jit_forces": False,
     },
 }
 
@@ -419,6 +420,7 @@ class VmecJax:
         self._jit_forces = "auto"
         self._forward_trial_max_iter = None
         self._forward_trial_grad_tol = None
+        self._forward_trial_jit_forces = None
         self._reset_caches()
 
     def _reset_caches(self, *, reset_warm_start: bool = False) -> None:
@@ -554,6 +556,7 @@ class VmecJax:
         jit_forces: bool | str | None = None,
         forward_trial_max_iter: int | None = None,
         forward_trial_grad_tol: float | None = None,
+        forward_trial_jit_forces: bool | str | None = None,
     ) -> None:
         """Update VMEC-JAX solver controls used by this wrapper."""
         if max_iter is not None:
@@ -676,6 +679,21 @@ class VmecJax:
             forward_trial_grad_tol = float(forward_trial_grad_tol)
             if forward_trial_grad_tol != self._forward_trial_grad_tol:
                 self._forward_trial_grad_tol = forward_trial_grad_tol
+        if forward_trial_jit_forces is not None:
+            if isinstance(forward_trial_jit_forces, str):
+                value = str(forward_trial_jit_forces).strip().lower()
+                if value == "auto":
+                    jit_forces_store = "auto"
+                elif value in ("1", "true", "yes", "on"):
+                    jit_forces_store = True
+                elif value in ("0", "false", "no", "off"):
+                    jit_forces_store = False
+                else:
+                    raise ValueError("forward_trial_jit_forces must be bool-like or 'auto'")
+            else:
+                jit_forces_store = bool(forward_trial_jit_forces)
+            if jit_forces_store != self._forward_trial_jit_forces:
+                self._forward_trial_jit_forces = jit_forces_store
 
     def use_residual_autodiff_defaults(
         self,
@@ -936,7 +954,15 @@ class VmecJax:
             return np.empty((0, n_free), dtype=float)
         return jacobian
 
-    def _solve_state_residual_forward(self, x_free, *, step_size: float, max_iter: int | None = None, grad_tol: float | None = None):
+    def _solve_state_residual_forward(
+        self,
+        x_free,
+        *,
+        step_size: float,
+        max_iter: int | None = None,
+        grad_tol: float | None = None,
+        jit_forces: bool | str | None = None,
+    ):
         from vmec_jax.solve import solve_fixed_boundary_residual_iter
 
         self._ensure_context()
@@ -946,6 +972,7 @@ class VmecJax:
         signgs0 = vj.signgs_from_sqrtg(np.asarray(geom0.sqrtg), axis_index=1)
         max_iter = int(self._max_iter if max_iter is None else max_iter)
         grad_tol = float(self._grad_tol if grad_tol is None else grad_tol)
+        jit_forces_value = self._jit_forces if jit_forces is None else jit_forces
         res = solve_fixed_boundary_residual_iter(
             st0,
             self._static,
@@ -961,7 +988,7 @@ class VmecJax:
             limit_update_rms=True,
             verbose=False,
             verbose_vmec2000_table=False,
-            jit_forces=self._jit_forces,
+            jit_forces=jit_forces_value,
             use_scan=False,
             light_history=True,
             resume_state_mode="full",
@@ -987,6 +1014,7 @@ class VmecJax:
                 step_size=residual_step_size,
                 max_iter=self._forward_trial_max_iter,
                 grad_tol=self._forward_trial_grad_tol,
+                jit_forces=self._forward_trial_jit_forces,
             )
         return self.solve_state_for_objective(x_free)
 

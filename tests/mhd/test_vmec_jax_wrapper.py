@@ -473,6 +473,7 @@ def test_vmec_jax_solve_state_for_line_search_uses_forward_trial_overrides():
         residual_derivative_backend="discrete_adjoint",
         forward_trial_max_iter=1,
         forward_trial_grad_tol=1.0e-8,
+        forward_trial_jit_forces=False,
     )
 
     surf = vmec.boundary
@@ -488,6 +489,7 @@ def test_vmec_jax_solve_state_for_line_search_uses_forward_trial_overrides():
         step_size=step_size,
         max_iter=1,
         grad_tol=1.0e-8,
+        jit_forces=False,
     )
 
     np.testing.assert_allclose(np.asarray(vj.pack_state(state_trial)), np.asarray(vj.pack_state(state_forward)))
@@ -551,6 +553,7 @@ def test_vmec_jax_discrete_backend_forward_residuals_use_line_search_solver():
         residual_derivative_backend="discrete_adjoint",
         forward_trial_max_iter=1,
         forward_trial_grad_tol=1.0e-8,
+        forward_trial_jit_forces=False,
     )
 
     surf = vmec.boundary
@@ -577,6 +580,7 @@ def test_vmec_jax_discrete_backend_forward_residuals_use_line_search_solver():
         step_size=step_size,
         max_iter=1,
         grad_tol=1.0e-8,
+        jit_forces=False,
     )
     residual_trial = np.asarray(stage.extras["residuals_from_state"](state_trial), dtype=float)
 
