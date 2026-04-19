@@ -428,13 +428,13 @@ class VmecJax:
             self._context.st_guess = _clone_state(self._context_seed_guess)
 
     def clear_exact_caches(self) -> None:
-        """Clear exact-Jacobian helper caches without dropping warm-start state."""
-        self._discrete_jacobian_helper_cache = {}
+        """Clear large exact-solve payload caches without dropping warm-start state."""
         self._cached_wout = None
         self._cached_run = None
-        clear_replay = getattr(vj, "clear_replay_scan_caches", None)
-        if callable(clear_replay):
-            clear_replay()
+        if os.environ.get("SIMSOPT_EXACT_CLEAR_REPLAY_SCANS", "").strip().lower() in ("1", "true", "yes", "on"):
+            clear_replay = getattr(vj, "clear_replay_scan_caches", None)
+            if callable(clear_replay):
+                clear_replay()
 
     def _invalidate_runtime(self) -> None:
         """Invalidate stateful runtime caches that depend on static setup."""

@@ -1095,3 +1095,41 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
           RSS curve on the exact mode-2 path;
         - the remaining blocker is now late-run peak footprint / executable
           accumulation beyond the caches we directly control.
+    - exact mode-2 compile-audit follow-up on 2026-04-18:
+      - ran a dedicated compile-audit on the concrete exact Gauss-Newton path
+        for `max_mode=2`, `max_nfev=2/3`, using file-backed runs with
+        `TF_CPP_MIN_LOG_LEVEL=3` so the results were not swamped by PJRT
+        warning noise;
+      - key audit result:
+        - the remaining exact mode-2 runtime/memory problem is still strongly
+          tied to avoidable retracing inside hot functions, not just large
+          tapes or replay-column storage;
+      - stable fixes kept from that audit:
+        - `VmecJax.clear_exact_caches()` now keeps the exact helper-function
+          cache by default and only clears replay-scan runners when
+          `SIMSOPT_EXACT_CLEAR_REPLAY_SCANS` is explicitly enabled;
+        - this preserves shape-stable helper functions such as
+          `_initial_tangent_columns` and `_residual_tangent_columns` across
+          accepted exact GN steps instead of recreating them every time;
+      - measured effect on the exact `max_mode=2`, `max_nfev=2` path:
+        - same accepted trajectory and final total objective
+          `0.06204404247373875`;
+        - wall time stayed in the same regime (`~96 s` file-backed run);
+        - max RSS dropped from about `23.65 GB` to about `21.84 GB`;
+        - peak footprint stayed about flat (`~27.9 GB`);
+      - measured effect on exact `max_mode=2`, `max_nfev=3`:
+        - with the stable helper/cache changes the run still terminates late;
+        - file-backed run:
+          - elapsed about `275.18 s`;
+          - max RSS about `18.32 GB`;
+          - peak footprint about `54.74 GB`;
+      - rejected experiment:
+        - a broader preconditioner refactor around
+          `preconditioner_1d_jax._tridi_solve_batched_jmin0` was prototyped
+          and reverted after it introduced a scan-shape runtime failure;
+      - conclusion:
+        - the stable helper/cache changes are worth keeping because they
+          reduce live RSS on the exact mode-2 path;
+        - but they do not solve late completion;
+        - the next runtime target remains deeper retracing / retention inside
+          vmec_jax hot functions, especially replay and preconditioner internals.
