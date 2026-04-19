@@ -31,6 +31,9 @@ considering a vacuum field. The SPEC code is used with a single radial domain.
 Perform several runs with the VMEC python wrapper while changing a particular surface Fourier coefficient.
 ### QH_fixed_resolution
 Optimize for quasi-helical symmetry (M=1, N=1) at a given radius.
+### QH_fixed_resolution_jax
+Optimize for quasi-helical symmetry with `VmecJax`, using exact autodiff /
+discrete-adjoint Jacobians instead of finite differences.
 ### QSC
 Optimize an axis shape and the first-order shape of the flux surface
 at first order near the magnetic axis for a target iota and low elongation

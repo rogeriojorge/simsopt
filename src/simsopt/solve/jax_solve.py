@@ -37,6 +37,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     _scipy_least_squares = None
 
+try:
+    import vmec_jax as _vj  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    _vj = None
+
 __all__ = [
     "least_squares_jax_solve",
     "build_vmec_objective_stage",
@@ -485,10 +490,24 @@ def build_vmec_objective_stage(
                 state = vmec.solve_state_for_objective(x_free)
             return np.asarray(residuals_from_state(state), dtype=float)
 
+        def scipy_exact_residual_after_jacobian():
+            residual = scipy_callback_cache["residual"]
+            if residual is None:
+                return None
+            return np.asarray(residual, dtype=float)
+
+        def scipy_post_jacobian_callback():
+            _clear_scipy_callback_cache()
+            clear_post_jacobian_caches = getattr(vmec, "clear_post_jacobian_caches", None)
+            if callable(clear_post_jacobian_caches):
+                clear_post_jacobian_caches()
+
         residuals.scipy_residuals = scipy_residuals
         residuals.scipy_jacobian = scipy_jacobian
         residuals.scipy_state_payload = scipy_state_payload
         residuals.scipy_forward_residuals = scipy_forward_residuals
+        residuals.scipy_exact_residual_after_jacobian = scipy_exact_residual_after_jacobian
+        residuals.scipy_post_jacobian_callback = scipy_post_jacobian_callback
         residuals.scipy_clear_callback_cache = _clear_scipy_callback_cache
         residuals.scipy_clear_exact_caches = vmec.clear_exact_caches
 
@@ -680,6 +699,7 @@ def least_squares_jax_solve(
     success = False
     wall_clock_exhausted = False
     nfev = 0
+    message = None
     grad = jnp.zeros_like(y0)
     y = y0
     cost = jnp.asarray(0.0, dtype=y0.dtype)
@@ -687,6 +707,12 @@ def least_squares_jax_solve(
     scipy_jacobian_override = getattr(residual_fun, "scipy_jacobian", None)
     scipy_residuals_override = getattr(residual_fun, "scipy_residuals", None)
     scipy_forward_residuals_override = getattr(residual_fun, "scipy_forward_residuals", None)
+    scipy_post_jacobian_callback = getattr(residual_fun, "scipy_post_jacobian_callback", None)
+    scipy_exact_residual_after_jacobian = getattr(
+        residual_fun,
+        "scipy_exact_residual_after_jacobian",
+        None,
+    )
     scipy_clear_callback_cache = getattr(residual_fun, "scipy_clear_callback_cache", None)
     scipy_clear_exact_caches = getattr(residual_fun, "scipy_clear_exact_caches", None)
 
@@ -885,85 +911,168 @@ def least_squares_jax_solve(
             cost = cost_trial
     elif method == "gauss_newton":
         y = y0
-        previous_cost = None
-        previous_y = None
-        carried_residual_np = None
-        line_search_initial_step = 1.0
-        for iteration in range(int(max_nfev)):
-            if _deadline_exhausted(deadline):
-                wall_clock_exhausted = True
-                status = 2
-                break
-            if callable(scipy_residuals_override) and callable(scipy_jacobian_override) and jac_mode in ("jax", "auto"):
-                if carried_residual_np is None:
-                    residual_np = residuals_numpy(np.asarray(y, dtype=float))
-                else:
-                    residual_np = carried_residual_np
-                    carried_residual_np = None
-                J_np = jac_numpy(np.asarray(y, dtype=float))
-                cost_current = float(0.5 * np.dot(residual_np, residual_np))
-                grad_np = J_np.T @ residual_np
-                grad = jnp.asarray(grad_np, dtype=y.dtype)
-                if callable(scipy_clear_callback_cache):
-                    scipy_clear_callback_cache()
-            else:
-                residual = residuals_y(y)
-                J = jacobian_y(y)
-                J_np = np.asarray(J)
-                residual_np = np.asarray(residual)
-                cost_current = float(0.5 * np.dot(residual_np, residual_np))
-                grad_np = J_np.T @ residual_np
-                grad = jnp.asarray(grad_np, dtype=y.dtype)
-            nfev = iteration + 1
-            grad_norm = float(np.linalg.norm(grad_np))
-            if verbose:
-                print(f"iter {iteration:3d}  cost={cost_current:.6e}  grad_norm={grad_norm:.3e}")
-            if grad_norm < float(gtol):
-                status = 1
-                success = True
-                cost = jnp.asarray(cost_current, dtype=y.dtype)
-                break
-            step_np, *_ = np.linalg.lstsq(J_np, -residual_np, rcond=None)
-            if previous_cost is not None:
-                step_norm = float(np.linalg.norm(np.asarray(y, dtype=float) - previous_y))
-                if abs(previous_cost - cost_current) <= ftol_value * max(1.0, previous_cost):
-                    status = 1
-                    success = True
-                    cost = jnp.asarray(cost_current, dtype=y.dtype)
-                    break
-                if step_norm <= xtol_value * max(1.0, float(np.linalg.norm(np.asarray(y, dtype=float)))):
-                    status = 1
-                    success = True
-                    cost = jnp.asarray(cost_current, dtype=y.dtype)
-                    break
-            direction = jnp.asarray(step_np, dtype=y.dtype)
-            if callable(scipy_residuals_override) and callable(scipy_jacobian_override) and jac_mode in ("jax", "auto"):
-                y_trial, cost_trial, step_description, accepted, eval_count, accepted_residual_np, accepted_step_scale = accept_by_backtracking_numpy(
-                    np.asarray(y, dtype=float),
-                    cost_current,
-                    grad_np,
-                    np.asarray(direction, dtype=float),
-                    initial_step=line_search_initial_step,
+        use_exact_vmec_jax_gn = (
+            _vj is not None
+            and callable(getattr(_vj, "gauss_newton_least_squares", None))
+            and callable(scipy_residuals_override)
+            and callable(scipy_jacobian_override)
+            and jac_mode in ("jax", "auto")
+        )
+        if use_exact_vmec_jax_gn:
+            def _residual_numpy_for_gn(y_np):
+                y_arr = jnp.asarray(y_np, dtype=y0.dtype)
+                return _profiled_numpy_call(
+                    profile_data,
+                    "residual_calls",
+                    "residual_wall_s",
+                    lambda arr: np.asarray(scipy_residuals_override(arr * scale), dtype=float),
+                    y_arr,
                 )
-                if profile_data is not None:
-                    profile_data["backtrack_trial_calls"] += eval_count
-                carried_residual_np = accepted_residual_np
-                next_initial_step = accepted_step_scale
-                if int(y0.size) >= 16 and int(eval_count) > 1:
-                    next_initial_step = accepted_step_scale * 0.5
-                line_search_initial_step = max(min(next_initial_step, 1.0), 1e-6)
-            else:
-                cost_current_jnp = jnp.asarray(cost_current, dtype=y.dtype)
-                y_trial, cost_trial, step_description, accepted = accept_by_backtracking(y, cost_current_jnp, grad, direction)
-            if not accepted:
-                cost = jnp.asarray(cost_current, dtype=y.dtype)
-                break
-            previous_y = np.asarray(y, dtype=float)
-            previous_cost = cost_current
-            y = y_trial
-            cost = cost_trial
-            if clear_exact_caches_each_iter:
-                _clear_exact_runtime_caches()
+
+            def _forward_residual_numpy_for_gn(y_np):
+                if callable(scipy_forward_residuals_override):
+                    y_arr = jnp.asarray(y_np, dtype=y0.dtype)
+                    return _profiled_numpy_call(
+                        profile_data,
+                        "residual_calls",
+                        "residual_wall_s",
+                        lambda arr: np.asarray(scipy_forward_residuals_override(arr * scale), dtype=float),
+                        y_arr,
+                    )
+                return _residual_numpy_for_gn(y_np)
+
+            def _jacobian_numpy_for_gn(y_np):
+                y_arr = jnp.asarray(y_np, dtype=y0.dtype)
+                return _profiled_numpy_call(
+                    profile_data,
+                    "jacobian_calls",
+                    "jacobian_wall_s",
+                    lambda arr: np.asarray(scipy_jacobian_override(arr * scale), dtype=float) * np.asarray(scale, dtype=float)[None, :],
+                    y_arr,
+                )
+
+            def _post_jacobian_for_gn():
+                if callable(scipy_post_jacobian_callback):
+                    scipy_post_jacobian_callback()
+                if clear_exact_caches_each_iter:
+                    _clear_exact_runtime_caches()
+
+            def _exact_residual_after_jacobian_for_gn():
+                if callable(scipy_exact_residual_after_jacobian):
+                    residual_np = scipy_exact_residual_after_jacobian()
+                    if residual_np is not None:
+                        return np.asarray(residual_np, dtype=float)
+                return None
+
+            gn_result = _vj.gauss_newton_least_squares(
+                _residual_numpy_for_gn,
+                _jacobian_numpy_for_gn,
+                np.asarray(y0, dtype=float),
+                max_nfev=int(max_nfev),
+                ftol=ftol_value,
+                gtol=float(gtol),
+                xtol=xtol_value,
+                x_scale=np.ones_like(np.asarray(y0, dtype=float)),
+                forward_residual_fun=_forward_residual_numpy_for_gn,
+                post_jacobian_callback=(
+                    _post_jacobian_for_gn
+                    if callable(scipy_post_jacobian_callback) or clear_exact_caches_each_iter
+                    else None
+                ),
+                exact_residual_after_jacobian_fun=(
+                    _exact_residual_after_jacobian_for_gn
+                    if callable(scipy_exact_residual_after_jacobian)
+                    else None
+                ),
+                verbose=int(verbose),
+            )
+            y = jnp.asarray(np.asarray(gn_result["x"], dtype=float), dtype=y0.dtype)
+            cost = jnp.asarray(float(gn_result["cost"]), dtype=y0.dtype)
+            nfev = int(gn_result["nfev"])
+            status = int(gn_result["status"])
+            success = bool(gn_result["success"])
+            message = str(gn_result.get("message", ""))
+            grad = jnp.zeros_like(y)
+        else:
+            previous_cost = None
+            previous_y = None
+            carried_residual_np = None
+            line_search_initial_step = 1.0
+            for iteration in range(int(max_nfev)):
+                if _deadline_exhausted(deadline):
+                    wall_clock_exhausted = True
+                    status = 2
+                    break
+                if callable(scipy_residuals_override) and callable(scipy_jacobian_override) and jac_mode in ("jax", "auto"):
+                    if carried_residual_np is None:
+                        residual_np = residuals_numpy(np.asarray(y, dtype=float))
+                    else:
+                        residual_np = carried_residual_np
+                        carried_residual_np = None
+                    J_np = jac_numpy(np.asarray(y, dtype=float))
+                    cost_current = float(0.5 * np.dot(residual_np, residual_np))
+                    grad_np = J_np.T @ residual_np
+                    grad = jnp.asarray(grad_np, dtype=y.dtype)
+                    if callable(scipy_clear_callback_cache):
+                        scipy_clear_callback_cache()
+                else:
+                    residual = residuals_y(y)
+                    J = jacobian_y(y)
+                    J_np = np.asarray(J)
+                    residual_np = np.asarray(residual)
+                    cost_current = float(0.5 * np.dot(residual_np, residual_np))
+                    grad_np = J_np.T @ residual_np
+                    grad = jnp.asarray(grad_np, dtype=y.dtype)
+                nfev = iteration + 1
+                grad_norm = float(np.linalg.norm(grad_np))
+                if verbose:
+                    print(f"iter {iteration:3d}  cost={cost_current:.6e}  grad_norm={grad_norm:.3e}")
+                if grad_norm < float(gtol):
+                    status = 1
+                    success = True
+                    cost = jnp.asarray(cost_current, dtype=y.dtype)
+                    break
+                step_np, *_ = np.linalg.lstsq(J_np, -residual_np, rcond=None)
+                if previous_cost is not None:
+                    step_norm = float(np.linalg.norm(np.asarray(y, dtype=float) - previous_y))
+                    if abs(previous_cost - cost_current) <= ftol_value * max(1.0, previous_cost):
+                        status = 1
+                        success = True
+                        cost = jnp.asarray(cost_current, dtype=y.dtype)
+                        break
+                    if step_norm <= xtol_value * max(1.0, float(np.linalg.norm(np.asarray(y, dtype=float)))):
+                        status = 1
+                        success = True
+                        cost = jnp.asarray(cost_current, dtype=y.dtype)
+                        break
+                direction = jnp.asarray(step_np, dtype=y.dtype)
+                if callable(scipy_residuals_override) and callable(scipy_jacobian_override) and jac_mode in ("jax", "auto"):
+                    y_trial, cost_trial, step_description, accepted, eval_count, accepted_residual_np, accepted_step_scale = accept_by_backtracking_numpy(
+                        np.asarray(y, dtype=float),
+                        cost_current,
+                        grad_np,
+                        np.asarray(direction, dtype=float),
+                        initial_step=line_search_initial_step,
+                    )
+                    if profile_data is not None:
+                        profile_data["backtrack_trial_calls"] += eval_count
+                    carried_residual_np = accepted_residual_np
+                    next_initial_step = accepted_step_scale
+                    if int(y0.size) >= 16 and int(eval_count) > 1:
+                        next_initial_step = accepted_step_scale * 0.5
+                    line_search_initial_step = max(min(next_initial_step, 1.0), 1e-6)
+                else:
+                    cost_current_jnp = jnp.asarray(cost_current, dtype=y.dtype)
+                    y_trial, cost_trial, step_description, accepted = accept_by_backtracking(y, cost_current_jnp, grad, direction)
+                if not accepted:
+                    cost = jnp.asarray(cost_current, dtype=y.dtype)
+                    break
+                previous_y = np.asarray(y, dtype=float)
+                previous_cost = cost_current
+                y = y_trial
+                cost = cost_trial
+                if clear_exact_caches_each_iter:
+                    _clear_exact_runtime_caches()
     elif method == "trust_region":
         y = y0
         cost = objective_y(y)
@@ -1211,6 +1320,7 @@ def least_squares_jax_solve(
         "profile": profile_data,
         "wall_clock_exhausted": bool(wall_clock_exhausted),
         "step": step_description,
+        "message": message,
     }
 
 

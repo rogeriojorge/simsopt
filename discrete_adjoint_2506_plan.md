@@ -1252,3 +1252,51 @@ This branch is successful only if the resulting `QH_fixed_resolution_jax.py`:
           return / interpreter teardown;
         - explicit final exact-runtime cleanup is now part of the exact GN
           baseline and should remain there while longer mode-2 runs are pushed.
+    - exact standalone-to-SIMSOPT port pass on 2026-04-19:
+      - audited the working standalone vmec_jax exact QH path and identified
+        the main difference versus SIMSOPT: the standalone code delegates to
+        `vmec_jax.gauss_newton_least_squares(...)`, while SIMSOPT was still
+        maintaining its own heavier concrete exact GN loop;
+      - accepted simplification:
+        - `least_squares_jax_solve(..., method="gauss_newton")` now delegates
+          the concrete exact VMEC-JAX case to the shared vmec_jax GN helper
+          whenever `scipy_residuals` + `scipy_jacobian` callbacks are present;
+        - `build_vmec_objective_stage(...)` now exposes:
+          - `scipy_exact_residual_after_jacobian`
+          - `scipy_post_jacobian_callback`
+          so the SIMSOPT path uses the same residual/Jacobian pairing and
+          post-Jacobian cleanup strategy as the working standalone example;
+        - `VmecJax.clear_post_jacobian_caches()` now provides the narrow
+          wrapper hook used by the shared exact GN path.
+      - user-facing cleanup:
+        - kept `examples/2_Intermediate/QH_fixed_resolution_jax.py` on the
+          same simple SIMSOPT workflow as the classic example;
+        - added termination-message reporting;
+        - documented the JAX counterpart in
+          `docs/source/example_quasisymmetry.rst` and `examples/README.md`.
+      - validation:
+        - `tests/solve/test_jax_solve.py`: 8 passed;
+        - targeted `tests/mhd/test_vmec_jax_wrapper.py`: 6 passed.
+      - integrated benchmark after aligning the SIMSOPT residual solver kwargs
+        to the standalone exact baseline:
+        - `examples/2_Intermediate/QH_fixed_resolution_jax.py`
+          (`max_mode=1`, `max_nfev=10`, `ftol=gtol=xtol=1e-4`) now finishes
+          cleanly and matches the classic objective:
+          - final QS objective `0.21145335956477931`
+          - final total objective `0.2137888122639657`
+          - final aspect `7.0483265216955076`
+          - termination: ``ftol`` satisfied
+          - wall time about `70.91 s`
+          - max RSS about `17.29 GB`
+        - equivalent exact SIMSOPT mode-2 check (`max_mode=2`, `max_nfev=10`,
+          same tolerances) also now completes cleanly:
+          - final QS objective `0.010194216417773684`
+          - final total objective `0.010307115185952004`
+          - final aspect `6.989374616798519`
+          - wall time about `162.01 s`
+          - max RSS about `21.50 GB`
+      - conclusion:
+        - the SIMSOPT VMEC-JAX path is now using the same successful exact
+          optimization strategy as the standalone vmec_jax example;
+        - the remaining work before opening a PR is cleanup/polish, not a
+          missing optimization capability.

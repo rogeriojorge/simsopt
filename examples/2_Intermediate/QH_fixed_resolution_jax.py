@@ -79,6 +79,8 @@ surf.set_free_params(result["x"])
 state = vmec.solve_state_for_objective(result["x"])
 residual = np.asarray(residuals_from_state(state), dtype=float)
 
+if result.get("message"):
+    proc0_print("Termination message:", result["message"])
 proc0_print("Final aspect ratio:", float(np.asarray(vmec.aspect_equilibrium_from_state_jax(state))))
 proc0_print("Quasisymmetry objective after optimization:", float(np.asarray(qs.total_from_state(state))))
 proc0_print("Total objective after optimization:", float(np.dot(residual, residual)))

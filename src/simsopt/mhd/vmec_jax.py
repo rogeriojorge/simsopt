@@ -445,6 +445,17 @@ class VmecJax:
             if callable(clear_replay):
                 clear_replay()
 
+    def clear_post_jacobian_caches(self) -> None:
+        """Release large replay/preconditioner state after an exact Jacobian build."""
+        self._cached_wout = None
+        self._cached_run = None
+        clear_preconditioner = getattr(vj, "clear_preconditioner_jit_caches", None)
+        if callable(clear_preconditioner):
+            clear_preconditioner()
+        clear_replay = getattr(vj, "clear_replay_scan_caches", None)
+        if callable(clear_replay):
+            clear_replay()
+
     def _invalidate_runtime(self) -> None:
         """Invalidate stateful runtime caches that depend on static setup."""
         self._context_dirty = True
@@ -769,13 +780,21 @@ class VmecJax:
             solver_kwargs = dict(
                 indata=indata,
                 signgs=signgs0,
-                ftol=ftol,
                 step_size=float(step_size),
+                include_constraint_force=True,
+                apply_m1_constraints=True,
+                precond_radial_alpha=0.5,
+                precond_lambda_alpha=0.5,
+                mode_diag_exponent=0.0,
+                auto_flip_force=False,
+                divide_by_scalxc_for_update=False,
+                lambda_update_scale=1.0,
+                enforce_vmec_lambda_axis=True,
                 vmec2000_control=True,
+                strict_update=True,
                 reference_mode=False,
-                backtracking=True,
-                limit_dt_from_force=True,
-                limit_update_rms=True,
+                backtracking=False,
+                use_restart_triggers=True,
                 verbose=False,
                 verbose_vmec2000_table=False,
                 jit_forces=self._jit_forces,
@@ -981,11 +1000,20 @@ class VmecJax:
             ftol=grad_tol,
             max_iter=max_iter,
             step_size=float(step_size),
+            include_constraint_force=True,
+            apply_m1_constraints=True,
+            precond_radial_alpha=0.5,
+            precond_lambda_alpha=0.5,
+            mode_diag_exponent=0.0,
+            auto_flip_force=False,
+            divide_by_scalxc_for_update=False,
+            lambda_update_scale=1.0,
+            enforce_vmec_lambda_axis=True,
             vmec2000_control=True,
+            strict_update=True,
             reference_mode=False,
-            backtracking=True,
-            limit_dt_from_force=True,
-            limit_update_rms=True,
+            backtracking=False,
+            use_restart_triggers=True,
             verbose=False,
             verbose_vmec2000_table=False,
             jit_forces=jit_forces_value,

@@ -212,6 +212,39 @@ it can be seen that both have been reduced significantly, to 0.00794
 for the result shown here.
 
 
+Fixed resolution with VMEC-JAX
+------------------------------
+
+The repository also contains a JAX-native counterpart,
+:simsopt_file:`examples/2_Intermediate/QH_fixed_resolution_jax.py`.  The
+workflow is intentionally close to the classic script above:
+
+- load the same VMEC input,
+- define the same free boundary parameter space,
+- target the same quasi-helical symmetry residual and aspect ratio,
+- run a least-squares solve,
+- report the before/after objective values.
+
+The difference is in how derivatives are obtained.  The classic example uses
+MPI-parallel finite differences through the Fortran VMEC code.  The JAX example
+uses :class:`~simsopt.mhd.VmecJax` together with the exact VMEC-JAX
+discrete-adjoint / JVP path, so no finite-difference derivatives or VMEC2000
+executables are needed inside the optimization loop.  Since the Jacobian is
+formed directly from vmec_jax, the script runs as a plain serial Python script::
+
+  python examples/2_Intermediate/QH_fixed_resolution_jax.py
+
+The main SIMSOPT-facing objects are:
+
+- :class:`~simsopt.mhd.VmecJax` for the equilibrium solve,
+- :func:`~simsopt.solve.build_vmec_objective_stage` to set up the fixed-resolution
+  boundary parameter space and residual vector,
+- :func:`~simsopt.solve.least_squares_jax_solve` to run the least-squares solve.
+
+This JAX path is intended as the teaching example for fixed-resolution
+quasisymmetry optimization without finite differences.
+
+
 Dynamic resolution
 ------------------
 ..

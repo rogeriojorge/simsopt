@@ -183,3 +183,50 @@ def test_least_squares_jax_solve_gauss_newton_can_clear_exact_caches_on_return(m
 
     np.testing.assert_allclose(result["x"], np.array([3.0, -4.0]), atol=1e-10)
     assert calls["clear"] == 1
+
+
+def test_least_squares_jax_solve_gauss_newton_uses_exact_residual_and_post_jacobian_callback():
+    calls = {"post_jac": 0, "exact_residual": 0}
+    last_x = {"value": None}
+
+    class ResidualWithExactCallbacks:
+        def __call__(self, x):
+            return jnp.array([x[0] - 3.0, x[1] + 4.0])
+
+        def scipy_residuals(self, x):
+            x = np.asarray(x, dtype=float)
+            last_x["value"] = x.copy()
+            return np.array([x[0] - 3.0, x[1] + 4.0], dtype=float)
+
+        def scipy_forward_residuals(self, x):
+            x = np.asarray(x, dtype=float)
+            return np.array([x[0] - 3.0, x[1] + 4.0], dtype=float)
+
+        def scipy_jacobian(self, x):
+            _ = np.asarray(x, dtype=float)
+            return np.array([[1.0, 0.0], [0.0, 1.0]], dtype=float)
+
+        def scipy_exact_residual_after_jacobian(self):
+            calls["exact_residual"] += 1
+            x = last_x["value"]
+            return np.array([x[0] - 3.0, x[1] + 4.0], dtype=float)
+
+        def scipy_post_jacobian_callback(self):
+            calls["post_jac"] += 1
+
+    result = least_squares_jax_solve(
+        ResidualWithExactCallbacks(),
+        np.array([0.0, 0.0]),
+        method="gauss_newton",
+        max_nfev=2,
+        ftol=1e-10,
+        gtol=1e-10,
+        xtol=1e-10,
+        jit=False,
+        jac="jax",
+        verbose=0,
+    )
+
+    np.testing.assert_allclose(result["x"], np.array([3.0, -4.0]), atol=1e-10)
+    assert calls["exact_residual"] >= 1
+    assert calls["post_jac"] >= 1
