@@ -1,3 +1,7 @@
+from simsopt._core.jax_runtime_env import configure_jax_runtime_env
+
+configure_jax_runtime_env()
+
 import jax
 jax.config.update("jax_enable_x64", True)
 from .config import *

@@ -17,6 +17,10 @@ from typing import Callable, Dict, Sequence
 
 import numpy as np
 
+from simsopt._core.jax_runtime_env import configure_jax_runtime_env
+
+configure_jax_runtime_env()
+
 try:
     import jax
     import jax.numpy as jnp
